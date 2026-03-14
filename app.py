@@ -52,7 +52,7 @@ def load_assets():
         except Exception as e: return f"Model Hatası: {e}"
     return "Model dosyaları (.pkl) bulunamadı."
 
-# 5. ARAYÜZ ÜST KISIM
+# 5. ÜST KISIM
 col1, col2, col3 = st.columns([1, 4, 1])
 with col1:
     if os.path.exists("TÜBİTAK_logo.svg.png"): st.image("TÜBİTAK_logo.svg.png", width=110)
@@ -70,7 +70,6 @@ if isinstance(assets, str):
 else:
     model, scaler = assets
     
-    # --- YAN PANEL (SIDEBAR) ---
     with st.sidebar:
         st.header("🔬 Kullanıcı Paneli")
         user_name = st.text_input("Adınız:", placeholder="Analizi kim yapıyor?")
@@ -78,7 +77,6 @@ else:
         st.divider()
         st.header("🔐 Yetkili Erişimi")
         
-        # Session state ile giriş kontrolü
         if 'logged_in' not in st.session_state:
             st.session_state.logged_in = False
 
@@ -98,7 +96,9 @@ else:
             
             st.divider()
             if st.button("🗑️ Tüm Havuzu Temizle"):
-                for f in glob.glob(f"{SAVE_DIR}/*.png"): os.remove(f)
+                for f in glob.glob(f"{SAVE_DIR}/*.png"): 
+                    try: os.remove(f)
+                    except: pass
                 st.rerun()
 
     # --- ANA ANALİZ ---
@@ -106,10 +106,10 @@ else:
 
     if uploaded:
         if not user_name:
-            st.warning("Devam etmek için lütfen sol menüden adınızı girin.")
+            st.warning("Devam etmek için lütfen adınızı girin.")
         else:
             pil_img = Image.open(uploaded).convert("RGB")
-            with st.spinner("Yapay Zeka Termal İmzaları İnceliyor..."):
+            with st.spinner("İşleniyor..."):
                 nobg = remove(pil_img).convert("RGB")
                 gray = cv2.cvtColor(np.array(nobg), cv2.COLOR_RGB2GRAY)
                 blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -135,40 +135,40 @@ else:
                     cv2.putText(res_img, label, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
 
                 # Havuza Kaydet
-                t_str = time.strftime("%H:%M:%S")
                 clean_name = "".join(x for x in user_name if x.isalnum())
                 save_path = f"{SAVE_DIR}/{int(time.time())}_{clean_name}_{p_say}_{s_say}.png"
-                res_pil = Image.fromarray(res_img)
-                res_pil.save(save_path)
+                Image.fromarray(res_img).save(save_path)
 
                 # Sonuç Görünümü
                 st.subheader("📊 Analiz Sonuçları")
                 c_img1, c_img2 = st.columns(2)
-                with c_img1: st.image(uploaded, caption="Orijinal Görüntü", use_container_width=True)
-                with c_img2: st.image(res_img, caption="Analiz Edilmiş Görüntü", use_container_width=True)
+                with c_img1: st.image(uploaded, caption="Orijinal", use_container_width=True)
+                with c_img2: st.image(res_img, caption="Analiz Sonucu", use_container_width=True)
                 
-                # İndirme Butonu
-                buf = cv2.imencode(".png", cv2.cvtColor(res_img, cv2.COLOR_RGB2BGR))[1].tobytes()
-                st.download_button(label="📥 Analizli Görseli İndir", data=buf, file_name=f"analiz_{clean_name}.png", mime="image/png")
-
-                st.divider()
                 total = p_say + s_say
                 p_rate = (p_say / total * 100) if total > 0 else 0
-                
+                st.divider()
                 m1, m2, m3 = st.columns(3)
-                m1.metric("🔴 PESTİSİTLİ", f"{p_say} Adet")
-                m2.metric("🟢 PESTİSİTSİZ", f"{s_say} Adet")
-                m3.metric("⚠️ PESTİSİT ORANI", f"%{p_rate:.1f}")
+                m1.metric("🔴 PESTİSİTLİ", f"{p_say}")
+                m2.metric("🟢 PESTİSİTSİZ", f"{s_say}")
+                m3.metric("⚠️ ORAN", f"%{p_rate:.1f}")
 
-    # --- ŞİFRELİ HAVUZ ---
+    # --- ŞİFRELİ HAVUZ (HATA DÜZELTİLEN KISIM) ---
     if st.session_state.logged_in:
         st.divider()
-        st.subheader("🌐 Ortak Analiz Havuzu (Yönetici)")
+        st.subheader("🌐 Ortak Analiz Havuzu")
         files = sorted(glob.glob(f"{SAVE_DIR}/*.png"), key=os.path.getmtime, reverse=True)
         if files:
             for f in files:
-                fname = os.path.basename(f).replace(".png", "")
-                parts = fname.split("_")
-                if len(parts) >= 4:
-                    with st.expander(f"👤 {parts[1]} | 🔴 {parts[2]} | 🟢 {parts[3]}"):
-                        st.image(f, use_container_width=True)
+                try:
+                    fname = os.path.basename(f).replace(".png", "")
+                    parts = fname.split("_")
+                    if len(parts) >= 4:
+                        with st.expander(f"👤 {parts[1]} | 🔴 {parts[2]} | 🟢 {parts[3]}"):
+                            # Hata veren satıra try-except ve dosya kontrolü eklendi
+                            if os.path.exists(f):
+                                img = Image.open(f)
+                                st.image(img, use_container_width=True)
+                except Exception as e:
+                    # Bozuk dosyayı görmezden gel ve devam et
+                    continue
