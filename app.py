@@ -19,22 +19,23 @@ except ImportError as e:
     st.stop()
 
 # ==========================================
-# ÜST BİLGİ VE LOGOLAR
+# ÜST BİLGİ VE LOGOLAR (HATA DÜZELTİLDİ)
 # ==========================================
-# Logoların GitHub deponuzda olduğunu varsayıyoruz. 
-# İsimler: TÜBİTAK_logo.svg.png ve images.jpg
 def display_header():
     col1, col2, col3 = st.columns([1, 4, 1])
     
     with col1:
+        # TÜBİTAK Logosu
         if os.path.exists("TÜBİTAK_logo.svg.png"):
             st.image("TÜBİTAK_logo.svg.png", width=120)
     
     with col2:
-        st.markdown("<h1 style='text-align: center;'>Termal Analiz ve Pestisit Tespit Sistemi</h1>", unsafe_allow_whitespace=True)
-        st.markdown("<p style='text-align: center; color: gray;'>Yapay Zeka Destekli Fiziksel Analiz Laboratuvarı</p>", unsafe_allow_whitespace=True)
+        # Başlık ve Alt Başlık - unsafe_allow_html hatası düzeltildi
+        st.markdown("<h1 style='text-align: center;'>Termal Analiz ve Pestisit Tespit Sistemi</h1>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: gray;'>Yapay Zeka Destekli Fiziksel Analiz Laboratuvarı</p>", unsafe_allow_html=True)
         
     with col3:
+        # MEB/Proje Logosu
         if os.path.exists("images.jpg"):
             st.image("images.jpg", width=120)
     st.divider()
