@@ -14,7 +14,8 @@ import glob
 st.set_page_config(page_title="Pestisit Analiz Lab", page_icon="🍎", layout="wide")
 
 # 2. AYARLAR VE ŞİFRE
-ADMIN_PASSWORD = "1234"  # Burayı istediğin şifre ile değiştirebilirsin
+# Şifreyi sunumdan önce buradan değiştirebilirsin.
+ADMIN_PASSWORD = "ZAHID" 
 SAVE_DIR = "analiz_havuzu"
 if not os.path.exists(SAVE_DIR):
     os.makedirs(SAVE_DIR)
@@ -129,12 +130,27 @@ else:
                 save_path = f"{SAVE_DIR}/{timestamp}_{clean_name}_{p_say}_{s_say}.png"
                 Image.fromarray(res_img).save(save_path)
 
-                # Sonuçları Göster
-                c1, c2 = st.columns([2, 1])
-                with c1: st.image(res_img, caption="Analiz Sonucu", use_container_width=True)
-                with c2:
-                    st.metric("🔴 PESTİSİTLİ", p_say)
-                    st.metric("🟢 PESTİSİTSİZ", s_say)
+                # --- SONUÇLARI GÖSTER (GÜNCELLENDİ) ---
+                st.subheader("📊 Analiz Sonuçları")
+                
+                # Sürümleri yan yana göstermek için 2 sütun oluşturuyoruz
+                col_img1, col_img2 = st.columns(2)
+                
+                with col_img1:
+                    # Orijinal termal görüntüyü yüklendiği gibi göster
+                    st.image(uploaded, caption="Yüklenen Görüntü", use_container_width=True)
+                    
+                with col_img2:
+                    # Analiz edilmiş, kare içine alınmış görüntüyü göster
+                    st.image(res_img, caption="Analiz Edilmiş Görüntü", use_container_width=True)
+                
+                # Sayısal sonuçları metrik olarak göster
+                st.divider()
+                col_metric1, col_metric2 = st.columns(2)
+                with col_metric1:
+                    st.metric("🔴 PESTİSİTLİ Örnek Sayısı", p_say)
+                with col_metric2:
+                    st.metric("🟢 PESTİSİTSİZ Örnek Sayısı", s_say)
 
     # --- ŞİFRELİ ORTAK HAVUZ GÖRÜNÜMÜ ---
     if admin_auth == ADMIN_PASSWORD:
@@ -149,6 +165,7 @@ else:
                 parts = fname.split("_")
                 if len(parts) >= 4:
                     u_name, p_val, s_val = parts[1], parts[2], parts[3]
+                    # Havuzda da genişliği sınırla
                     with st.expander(f"👤 Gönderen: {u_name} | 🔴 {p_val} | 🟢 {s_val}"):
                         st.image(f, use_container_width=True)
         else:
