@@ -87,6 +87,8 @@ else:
                 if admin_pw == ADMIN_PASSWORD:
                     st.session_state.logged_in = True
                     st.rerun()
+                else:
+                    st.error("Hatalı şifre!")
         else:
             st.success("Yönetici Modu")
             if st.button("Çıkış Yap"):
@@ -129,7 +131,8 @@ else:
                 cv2.putText(res_img, label, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
 
             # Kayıt
-            save_path = f"{SAVE_DIR}/{int(time.time())}_{user_name}_{p_say}_{s_say}.png"
+            clean_name = "".join(x for x in user_name if x.isalnum())
+            save_path = f"{SAVE_DIR}/{int(time.time())}_{clean_name}_{p_say}_{s_say}.png"
             Image.fromarray(res_img).save(save_path)
 
             # EKRAN ÇIKTISI
@@ -140,20 +143,47 @@ else:
             with c2: st.image(res_img, caption="Tespit", use_container_width=True)
             with c3:
                 if PLOTLY_AVAILABLE and (p_say + s_say > 0):
-                    fig = go.Figure(data=[go.Pie(labels=['Pestisit', 'Temiz'], values=[p_say, s_say], hole=.3)])
+                    fig = go.Figure(data=[go.Pie(labels=['Pestisit', 'Temiz'], values=[p_say, s_say], hole=.3, marker=dict(colors=['#FF4B4B', '#00CC96']))])
                     fig.update_layout(height=300, margin=dict(l=0,r=0,b=0,t=0))
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.metric("🔴 Pestisitli", p_say)
                     st.metric("🟢 Temiz", s_say)
 
-    # --- YÖNETİCİ HAVUZU ---
+    # --- YÖNETİCİ HAVUZU (GÜNCELLENMİŞ İNDİRME ÖZELLİĞİ) ---
     if st.session_state.logged_in:
         st.divider()
-        st.subheader("📁 Arşivlenmiş Analizler")
+        st.subheader("📁 Arşivlenmiş Analizler ve İndirme")
         files = sorted(glob.glob(f"{SAVE_DIR}/*.png"), key=os.path.getmtime, reverse=True)
+        
+        if not files:
+            st.info("Arşiv henüz boş.")
+        
         for f in files:
             try:
-                with st.expander(f"Kayıt: {os.path.basename(f)}"):
-                    st.image(f, use_container_width=True)
-            except: continue
+                fname = os.path.basename(f)
+                # Dosya adından bilgileri ayıkla (zaman_isim_p_s.png)
+                parts = fname.replace(".png", "").split("_")
+                
+                display_label = f"📁 Kayıt: {fname}"
+                if len(parts) >= 4:
+                    display_label = f"👤 {parts[1]} | 🔴 {parts[2]} | 🟢 {parts[3]}"
+
+                with st.expander(display_label):
+                    img = Image.open(f)
+                    st.image(img, use_container_width=True)
+                    
+                    # İndirme Butonu
+                    with open(f, "rb") as file:
+                        btn = st.download_button(
+                            label="📥 Analizi İndir",
+                            data=file,
+                            file_name=f"indirilen_{fname}",
+                            mime="image/png",
+                            key=f"btn_{fname}" # Her buton için benzersiz anahtar
+                        )
+            except Exception as e:
+                continue
+
+        
+                
