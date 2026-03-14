@@ -14,8 +14,7 @@ import glob
 st.set_page_config(page_title="Pestisit Analiz Lab", page_icon="🍎", layout="wide")
 
 # 2. AYARLAR VE ŞİFRE
-# Şifreyi sunumdan önce buradan değiştirebilirsin.
-ADMIN_PASSWORD = "ZAHID" 
+ADMIN_PASSWORD = "1234" 
 SAVE_DIR = "analiz_havuzu"
 if not os.path.exists(SAVE_DIR):
     os.makedirs(SAVE_DIR)
@@ -51,7 +50,7 @@ def load_assets():
             with open(s_p, "rb") as f: s = pickle.load(f)
             return m, s
         except Exception as e: return f"Model Hatası: {e}"
-    return "Model dosyaları (.pkl) bulunamadı."
+    return "Model dosyaları bulunamadı."
 
 # 5. ÜST BİLGİ VE LOGOLAR
 def display_header():
@@ -73,24 +72,20 @@ if isinstance(assets, str):
 else:
     model, scaler = assets
     
-    # --- YAN PANEL (SIDEBAR) ---
     with st.sidebar:
         st.header("🔬 Giriş Paneli")
         user_name = st.text_input("Analiz Yapanın Adı:", placeholder="İsminizi yazın...")
-        
         st.divider()
         st.header("🔐 Yetkili Erişimi")
         admin_auth = st.text_input("Yönetici Şifresi:", type="password")
+        is_admin = admin_auth.strip() == ADMIN_PASSWORD
         
-        if admin_auth == ADMIN_PASSWORD:
+        if is_admin:
             st.success("Yönetici girişi yapıldı.")
             if st.button("Tüm Havuzu Temizle"):
                 for f in glob.glob(f"{SAVE_DIR}/*.png"): os.remove(f)
                 st.rerun()
-        elif admin_auth != "":
-            st.error("Hatalı şifre!")
 
-    # --- ANA ANALİZ EKRANI ---
     uploaded = st.file_uploader("Termal Görüntü Yükleyin", type=["jpg", "png", "jpeg"])
 
     if uploaded:
@@ -130,47 +125,29 @@ else:
                 save_path = f"{SAVE_DIR}/{timestamp}_{clean_name}_{p_say}_{s_say}.png"
                 Image.fromarray(res_img).save(save_path)
 
-                # --- SONUÇLARI GÖSTER (GÜNCELLENDİ) ---
+                # --- YATAY GÖRÜNÜM ---
                 st.subheader("📊 Analiz Sonuçları")
-                
-                # Sürümleri yan yana göstermek için 2 sütun oluşturuyoruz
-                col_img1, col_img2 = st.columns(2)
-                
-                with col_img1:
-                    # Orijinal termal görüntüyü yüklendiği gibi göster
-                    st.image(uploaded, caption="Yüklenen Görüntü", use_container_width=True)
-                    
-                with col_img2:
-                    # Analiz edilmiş, kare içine alınmış görüntüyü göster
+                col_res1, col_res2 = st.columns(2)
+                with col_res1:
+                    st.image(uploaded, caption="Orijinal Görüntü", use_container_width=True)
+                with col_res2:
                     st.image(res_img, caption="Analiz Edilmiş Görüntü", use_container_width=True)
                 
-                # Sayısal sonuçları metrik olarak göster
                 st.divider()
-                col_metric1, col_metric2 = st.columns(2)
-                with col_metric1:
-                    st.metric("🔴 PESTİSİTLİ Örnek Sayısı", p_say)
-                with col_metric2:
-                    st.metric("🟢 PESTİSİTSİZ Örnek Sayısı", s_say)
+                m1, m2 = st.columns(2)
+                m1.metric("🔴 PESTİSİTLİ", p_say)
+                m2.metric("🟢 PESTİSİTSİZ", s_say)
 
-    # --- ŞİFRELİ ORTAK HAVUZ GÖRÜNÜMÜ ---
-    if admin_auth == ADMIN_PASSWORD:
+    # --- ŞİFRELİ ORTAK HAVUZ ---
+    if is_admin:
         st.divider()
-        st.subheader("🌐 Ortak Analiz Havuzu (Yönetici Paneli)")
-        
+        st.subheader("🌐 Ortak Analiz Havuzu (Yönetici)")
         all_files = sorted(glob.glob(f"{SAVE_DIR}/*.png"), key=os.path.getmtime, reverse=True)
-        
         if all_files:
             for f in all_files:
                 fname = os.path.basename(f).replace(".png", "")
                 parts = fname.split("_")
                 if len(parts) >= 4:
                     u_name, p_val, s_val = parts[1], parts[2], parts[3]
-                    # Havuzda da genişliği sınırla
-                    with st.expander(f"👤 Gönderen: {u_name} | 🔴 {p_val} | 🟢 {s_val}"):
+                    with st.expander(f"👤 {u_name} | 🔴 {p_val} | 🟢 {s_val}"):
                         st.image(f, use_container_width=True)
-        else:
-            st.info("Havuzda kayıtlı analiz bulunmuyor.")
-    else:
-        # Şifre girilmediyse havuz gizli kalır
-        st.divider()
-        st.caption("Ortak analiz kayıtlarını görmek için yönetici girişi yapmalısınız.")
