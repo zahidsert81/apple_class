@@ -50,21 +50,19 @@ def load_assets():
             with open(s_p, "rb") as f: s = pickle.load(f)
             return m, s
         except Exception as e: return f"Model Hatası: {e}"
-    return "Model dosyaları bulunamadı."
+    return "Model dosyaları (.pkl) bulunamadı."
 
-# 5. ÜST BİLGİ VE LOGOLAR
-def display_header():
-    col1, col2, col3 = st.columns([1, 4, 1])
-    with col1:
-        if os.path.exists("TÜBİTAK_logo.svg.png"): st.image("TÜBİTAK_logo.svg.png", width=110)
-    with col2:
-        st.markdown("<h1 style='text-align: center; margin-bottom: 0;'>Termal Analiz Sistemi</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: center; color: gray;'>Muhammed Zahid SERT | Danışman: Emine SARI</p>", unsafe_allow_html=True)
-    with col3:
-        if os.path.exists("images.jpg"): st.image("images.jpg", width=110)
-    st.divider()
+# 5. ARAYÜZ ÜST KISIM
+col1, col2, col3 = st.columns([1, 4, 1])
+with col1:
+    if os.path.exists("TÜBİTAK_logo.svg.png"): st.image("TÜBİTAK_logo.svg.png", width=110)
+with col2:
+    st.markdown("<h1 style='text-align: center; margin-bottom: 0;'>Termal Analiz Sistemi</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: gray;'>Muhammed Zahid SERT | Danışman: Emine SARI</p>", unsafe_allow_html=True)
+with col3:
+    if os.path.exists("images.jpg"): st.image("images.jpg", width=110)
+st.divider()
 
-display_header()
 assets = load_assets()
 
 if isinstance(assets, str):
@@ -72,28 +70,46 @@ if isinstance(assets, str):
 else:
     model, scaler = assets
     
+    # --- YAN PANEL (SIDEBAR) ---
     with st.sidebar:
-        st.header("🔬 Giriş Paneli")
-        user_name = st.text_input("Analiz Yapanın Adı:", placeholder="İsminizi yazın...")
+        st.header("🔬 Kullanıcı Paneli")
+        user_name = st.text_input("Adınız:", placeholder="Analizi kim yapıyor?")
+        
         st.divider()
         st.header("🔐 Yetkili Erişimi")
-        admin_auth = st.text_input("Yönetici Şifresi:", type="password")
-        is_admin = admin_auth.strip() == ADMIN_PASSWORD
         
-        if is_admin:
-            st.success("Yönetici girişi yapıldı.")
-            if st.button("Tüm Havuzu Temizle"):
+        # Session state ile giriş kontrolü
+        if 'logged_in' not in st.session_state:
+            st.session_state.logged_in = False
+
+        if not st.session_state.logged_in:
+            admin_pw = st.text_input("Şifre:", type="password")
+            if st.button("Giriş Yap"):
+                if admin_pw == ADMIN_PASSWORD:
+                    st.session_state.logged_in = True
+                    st.rerun()
+                else:
+                    st.error("Hatalı şifre!")
+        else:
+            st.success("Yönetici: Aktif")
+            if st.button("Çıkış Yap"):
+                st.session_state.logged_in = False
+                st.rerun()
+            
+            st.divider()
+            if st.button("🗑️ Tüm Havuzu Temizle"):
                 for f in glob.glob(f"{SAVE_DIR}/*.png"): os.remove(f)
                 st.rerun()
 
+    # --- ANA ANALİZ ---
     uploaded = st.file_uploader("Termal Görüntü Yükleyin", type=["jpg", "png", "jpeg"])
 
     if uploaded:
         if not user_name:
-            st.warning("Lütfen önce sol menüden adınızı girin!")
+            st.warning("Devam etmek için lütfen sol menüden adınızı girin.")
         else:
             pil_img = Image.open(uploaded).convert("RGB")
-            with st.spinner("Yapay zeka analiz ediyor..."):
+            with st.spinner("Yapay Zeka Termal İmzaları İnceliyor..."):
                 nobg = remove(pil_img).convert("RGB")
                 gray = cv2.cvtColor(np.array(nobg), cv2.COLOR_RGB2GRAY)
                 blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -115,39 +131,44 @@ else:
                     color = (255, 0, 0) if pred == 1 else (0, 255, 0)
                     if pred == 1: p_say += 1
                     else: s_say += 1
-                    
                     cv2.rectangle(res_img, (x, y), (x+w, y+h), color, 8)
                     cv2.putText(res_img, label, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
 
-                # Ortak Havuza Kaydet
-                timestamp = int(time.time())
+                # Havuza Kaydet
+                t_str = time.strftime("%H:%M:%S")
                 clean_name = "".join(x for x in user_name if x.isalnum())
-                save_path = f"{SAVE_DIR}/{timestamp}_{clean_name}_{p_say}_{s_say}.png"
-                Image.fromarray(res_img).save(save_path)
+                save_path = f"{SAVE_DIR}/{int(time.time())}_{clean_name}_{p_say}_{s_say}.png"
+                res_pil = Image.fromarray(res_img)
+                res_pil.save(save_path)
 
-                # --- YATAY GÖRÜNÜM ---
+                # Sonuç Görünümü
                 st.subheader("📊 Analiz Sonuçları")
-                col_res1, col_res2 = st.columns(2)
-                with col_res1:
-                    st.image(uploaded, caption="Orijinal Görüntü", use_container_width=True)
-                with col_res2:
-                    st.image(res_img, caption="Analiz Edilmiş Görüntü", use_container_width=True)
+                c_img1, c_img2 = st.columns(2)
+                with c_img1: st.image(uploaded, caption="Orijinal Görüntü", use_container_width=True)
+                with c_img2: st.image(res_img, caption="Analiz Edilmiş Görüntü", use_container_width=True)
                 
-                st.divider()
-                m1, m2 = st.columns(2)
-                m1.metric("🔴 PESTİSİTLİ", p_say)
-                m2.metric("🟢 PESTİSİTSİZ", s_say)
+                # İndirme Butonu
+                buf = cv2.imencode(".png", cv2.cvtColor(res_img, cv2.COLOR_RGB2BGR))[1].tobytes()
+                st.download_button(label="📥 Analizli Görseli İndir", data=buf, file_name=f"analiz_{clean_name}.png", mime="image/png")
 
-    # --- ŞİFRELİ ORTAK HAVUZ ---
-    if is_admin:
+                st.divider()
+                total = p_say + s_say
+                p_rate = (p_say / total * 100) if total > 0 else 0
+                
+                m1, m2, m3 = st.columns(3)
+                m1.metric("🔴 PESTİSİTLİ", f"{p_say} Adet")
+                m2.metric("🟢 PESTİSİTSİZ", f"{s_say} Adet")
+                m3.metric("⚠️ PESTİSİT ORANI", f"%{p_rate:.1f}")
+
+    # --- ŞİFRELİ HAVUZ ---
+    if st.session_state.logged_in:
         st.divider()
         st.subheader("🌐 Ortak Analiz Havuzu (Yönetici)")
-        all_files = sorted(glob.glob(f"{SAVE_DIR}/*.png"), key=os.path.getmtime, reverse=True)
-        if all_files:
-            for f in all_files:
+        files = sorted(glob.glob(f"{SAVE_DIR}/*.png"), key=os.path.getmtime, reverse=True)
+        if files:
+            for f in files:
                 fname = os.path.basename(f).replace(".png", "")
                 parts = fname.split("_")
                 if len(parts) >= 4:
-                    u_name, p_val, s_val = parts[1], parts[2], parts[3]
-                    with st.expander(f"👤 {u_name} | 🔴 {p_val} | 🟢 {s_val}"):
+                    with st.expander(f"👤 {parts[1]} | 🔴 {parts[2]} | 🟢 {parts[3]}"):
                         st.image(f, use_container_width=True)
