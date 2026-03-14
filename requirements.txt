@@ -3,6 +3,7 @@ numpy==1.26.4
 opencv-python-headless
 pillow
 rembg
+onnxruntime
 scikit-image
 scipy
 scikit-learn==1.5.2
