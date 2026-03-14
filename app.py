@@ -2,10 +2,10 @@ import streamlit as st
 import os
 import time
 
-# Sayfa ayarlarını en başta yapalım (Beyaz ekranı önlemek için)
+# Sayfa ayarları
 st.set_page_config(page_title="Pestisit Analiz Lab", page_icon="🍎", layout="wide")
 
-# Kütüphane kontrolü ve Importlar
+# Kütüphane kontrolü
 try:
     import numpy as np
     import cv2
@@ -14,11 +14,30 @@ try:
     from rembg import remove
     from skimage.feature import graycomatrix, graycoprops
     from scipy.stats import skew, kurtosis
-    import sklearn
 except ImportError as e:
     st.error(f"Kütüphane yükleme hatası: {e}")
-    st.info("Lütfen requirements.txt dosyasını kontrol edin ve uygulamanın sağ altından 'Reboot' yapın.")
     st.stop()
+
+# ==========================================
+# ÜST BİLGİ VE LOGOLAR
+# ==========================================
+# Logoların GitHub deponuzda olduğunu varsayıyoruz. 
+# İsimler: TÜBİTAK_logo.svg.png ve images.jpg
+def display_header():
+    col1, col2, col3 = st.columns([1, 4, 1])
+    
+    with col1:
+        if os.path.exists("TÜBİTAK_logo.svg.png"):
+            st.image("TÜBİTAK_logo.svg.png", width=120)
+    
+    with col2:
+        st.markdown("<h1 style='text-align: center;'>Termal Analiz ve Pestisit Tespit Sistemi</h1>", unsafe_allow_whitespace=True)
+        st.markdown("<p style='text-align: center; color: gray;'>Yapay Zeka Destekli Fiziksel Analiz Laboratuvarı</p>", unsafe_allow_whitespace=True)
+        
+    with col3:
+        if os.path.exists("images.jpg"):
+            st.image("images.jpg", width=120)
+    st.divider()
 
 # ==========================================
 # ÖZELLİK ÇIKARMA
@@ -41,55 +60,46 @@ def extract_features(img_gray):
     features = glcm_features + hist_features + [edge_density]
     return np.array(features).reshape(1, -1)
 
-# ==========================================
-# MODEL YÜKLEME
-# ==========================================
 @st.cache_resource
 def load_assets():
     base_path = os.path.dirname(__file__)
     m_p = os.path.join(base_path, "rf_model.pkl")
     s_p = os.path.join(base_path, "scaler.pkl")
-    
     if os.path.exists(m_p) and os.path.exists(s_p):
         try:
-            with open(m_p, "rb") as f:
-                m = pickle.load(f)
-            with open(s_p, "rb") as f:
-                s = pickle.load(f)
+            with open(m_p, "rb") as f: m = pickle.load(f)
+            with open(s_p, "rb") as f: s = pickle.load(f)
             return m, s
-        except Exception as e:
-            return f"Yükleme Hatası: {e}"
-    return "Dosya bulunamadı."
+        except Exception as e: return f"Yükleme Hatası: {e}"
+    return "Model dosyaları bulunamadı."
 
 # ==========================================
-# ANA UYGULAMA
+# ANA ÇALIŞMA ALANI
 # ==========================================
 if 'db' not in st.session_state:
     st.session_state.db = []
 
-st.title("🌡️ Termal Analiz ve Pestisit Tespit Sistemi")
-
-# Model Kontrolü
+display_header()
 assets = load_assets()
 
 if isinstance(assets, str):
     st.error(f"Sistem Hazır Değil: {assets}")
-    st.info("GitHub'da 'rf_model.pkl' ve 'scaler.pkl' dosyalarının olduğundan emin olun.")
 else:
     model, scaler = assets
-    st.sidebar.success("✅ Sistem Aktif")
     
-    # Haber ve Başarı Kısmı (Sidebar)
-    st.sidebar.markdown("### 🥉 Başarılarımız")
-    st.sidebar.write("TÜBİTAK 2204-B Türkiye 3.lüğü")
-    
-    uploaded = st.file_uploader("Analiz için termal fotoğraf yükleyin", type=["jpg", "png", "jpeg"])
+    with st.sidebar:
+        st.header("🔬 Kontrol Paneli")
+        st.success("Yapay Zeka Aktif")
+        st.info("Fizik Alanı: Termal Bariyer Analizi")
+        if st.button("Veri Tabanını Temizle"):
+            st.session_state.db = []
+            st.rerun()
+
+    uploaded = st.file_uploader("Termal görüntü yükleyin", type=["jpg", "png", "jpeg"])
 
     if uploaded:
         pil_img = Image.open(uploaded).convert("RGB")
-        
         with st.spinner("Analiz ediliyor..."):
-            # Görüntü İşleme
             nobg = remove(pil_img).convert("RGB")
             gray = cv2.cvtColor(np.array(nobg), cv2.COLOR_RGB2GRAY)
             blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -103,10 +113,9 @@ else:
                 if cv2.contourArea(cnt) < 1000: continue
                 x, y, w, h = cv2.boundingRect(cnt)
                 crop = gray[y:y+h, x:x+w]
-                
                 feats = extract_features(crop)
-                feats_scaled = scaler.transform(feats)
-                pred = model.predict(feats_scaled)[0]
+                f_scaled = scaler.transform(feats)
+                pred = model.predict(f_scaled)[0]
                 
                 label = "PESTISITLI" if pred == 1 else "PESTISITSIZ"
                 color = (255, 0, 0) if pred == 1 else (0, 255, 0)
@@ -116,19 +125,15 @@ else:
                 cv2.rectangle(res_img, (x, y), (x+w, y+h), color, 12)
                 cv2.putText(res_img, label, (x, y-15), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 4)
 
-            # Veritabanına Ekle
             st.session_state.db.insert(0, {"img": res_img, "p": p_say, "s": s_say, "t": time.strftime("%H:%M:%S")})
             if len(st.session_state.db) > 100: st.session_state.db.pop()
 
-            # Gösterim
             c1, c2 = st.columns([2, 1])
-            with c1:
-                st.image(res_img, use_container_width=True)
+            with c1: st.image(res_img, use_container_width=True)
             with c2:
                 st.metric("🔴 PESTİSİTLİ", p_say)
                 st.metric("🟢 PESTİSİTSİZ", s_say)
 
-    # Arşiv
     if st.session_state.db:
         st.divider()
         st.subheader(f"📂 Analiz Arşivi ({len(st.session_state.db)} / 100)")
