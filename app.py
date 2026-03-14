@@ -19,29 +19,35 @@ except ImportError as e:
     st.stop()
 
 # ==========================================
-# ÜST BİLGİ VE LOGOLAR (HATA DÜZELTİLDİ)
+# ÜST BİLGİ, LOGOLAR VE KÜNYE
 # ==========================================
 def display_header():
+    # Logolar ve Başlık
     col1, col2, col3 = st.columns([1, 4, 1])
     
     with col1:
-        # TÜBİTAK Logosu
         if os.path.exists("TÜBİTAK_logo.svg.png"):
-            st.image("TÜBİTAK_logo.svg.png", width=120)
+            st.image("TÜBİTAK_logo.svg.png", width=110)
     
     with col2:
-        # Başlık ve Alt Başlık - unsafe_allow_html hatası düzeltildi
-        st.markdown("<h1 style='text-align: center;'>Termal Analiz ve Pestisit Tespit Sistemi</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: center; color: gray;'>Yapay Zeka Destekli Fiziksel Analiz Laboratuvarı</p>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; margin-bottom: 0;'>Termal Analiz ve Pestisit Tespit Sistemi</h1>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: #555; font-size: 1.2rem; margin-top: 0;'>Yapay Zeka Destekli Gıda Güvenliği Analizi</p>", unsafe_allow_html=True)
         
     with col3:
-        # MEB/Proje Logosu
         if os.path.exists("images.jpg"):
-            st.image("images.jpg", width=120)
+            st.image("images.jpg", width=110)
+    
     st.divider()
 
+    # Proje Künyesi (Öğrenci ve Danışman Bilgisi)
+    k1, k2 = st.columns(2)
+    with k1:
+        st.markdown(f"**👨‍💻 Öğrenci:** Muhammed Zahid SERT")
+    with k2:
+        st.markdown(f"**👩‍🏫 Danışman:** Emine SARI")
+
 # ==========================================
-# ÖZELLİK ÇIKARMA
+# ÖZELLİK ÇIKARMA (Fiziksel Parametreler)
 # ==========================================
 def extract_features(img_gray):
     img_8 = cv2.normalize(img_gray, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
@@ -71,8 +77,8 @@ def load_assets():
             with open(m_p, "rb") as f: m = pickle.load(f)
             with open(s_p, "rb") as f: s = pickle.load(f)
             return m, s
-        except Exception as e: return f"Yükleme Hatası: {e}"
-    return "Model dosyaları bulunamadı."
+        except Exception as e: return f"Model Hatası: {e}"
+    return "Model dosyaları (.pkl) dizinde bulunamadı."
 
 # ==========================================
 # ANA ÇALIŞMA ALANI
@@ -89,18 +95,18 @@ else:
     model, scaler = assets
     
     with st.sidebar:
-        st.header("🔬 Kontrol Paneli")
-        st.success("Yapay Zeka Aktif")
-        st.info("Fizik Alanı: Termal Bariyer Analizi")
+        st.header("🔬 Sistem Durumu")
+        st.success("Yapay Zeka Modeli Aktif")
+        st.divider()
         if st.button("Veri Tabanını Temizle"):
             st.session_state.db = []
             st.rerun()
 
-    uploaded = st.file_uploader("Termal görüntü yükleyin", type=["jpg", "png", "jpeg"])
+    uploaded = st.file_uploader("Analiz için termal görüntü yükleyin...", type=["jpg", "png", "jpeg"])
 
     if uploaded:
         pil_img = Image.open(uploaded).convert("RGB")
-        with st.spinner("Analiz ediliyor..."):
+        with st.spinner("Termal imza analiz ediliyor..."):
             nobg = remove(pil_img).convert("RGB")
             gray = cv2.cvtColor(np.array(nobg), cv2.COLOR_RGB2GRAY)
             blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -123,21 +129,25 @@ else:
                 if pred == 1: p_say += 1
                 else: s_say += 1
                 
-                cv2.rectangle(res_img, (x, y), (x+w, y+h), color, 12)
-                cv2.putText(res_img, label, (x, y-15), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 4)
+                cv2.rectangle(res_img, (x, y), (x+w, y+h), color, 8)
+                cv2.putText(res_img, label, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
 
+            # Geçici arşive ekle
             st.session_state.db.insert(0, {"img": res_img, "p": p_say, "s": s_say, "t": time.strftime("%H:%M:%S")})
             if len(st.session_state.db) > 100: st.session_state.db.pop()
 
+            # Sonuç ekranı
             c1, c2 = st.columns([2, 1])
-            with c1: st.image(res_img, use_container_width=True)
+            with c1:
+                st.image(res_img, caption="Mevcut Analiz", use_container_width=True)
             with c2:
-                st.metric("🔴 PESTİSİTLİ", p_say)
-                st.metric("🟢 PESTİSİTSİZ", s_say)
+                st.metric("🔴 PESTİSİTLİ (Adet)", p_say)
+                st.metric("🟢 PESTİSİTSİZ (Adet)", s_say)
 
+    # Arşiv Galerisi
     if st.session_state.db:
         st.divider()
-        st.subheader(f"📂 Analiz Arşivi ({len(st.session_state.db)} / 100)")
+        st.subheader(f"📂 Son Analizler ({len(st.session_state.db)} Kayıt)")
         cols = st.columns(4)
         for idx, item in enumerate(st.session_state.db):
             with cols[idx % 4]:
