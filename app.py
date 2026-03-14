@@ -13,7 +13,8 @@ import glob
 # 1. SAYFA AYARLARI
 st.set_page_config(page_title="Pestisit Analiz Lab", page_icon="🍎", layout="wide")
 
-# 2. ORTAK VERİ HAVUZU KLASÖRÜ
+# 2. AYARLAR VE ŞİFRE
+ADMIN_PASSWORD = "1234"  # Burayı istediğin şifre ile değiştirebilirsin
 SAVE_DIR = "analiz_havuzu"
 if not os.path.exists(SAVE_DIR):
     os.makedirs(SAVE_DIR)
@@ -71,14 +72,24 @@ if isinstance(assets, str):
 else:
     model, scaler = assets
     
+    # --- YAN PANEL (SIDEBAR) ---
     with st.sidebar:
-        st.header("🔬 Kullanıcı Girişi")
-        user_name = st.text_input("Adınız:", placeholder="İsminizi yazın...")
+        st.header("🔬 Giriş Paneli")
+        user_name = st.text_input("Analiz Yapanın Adı:", placeholder="İsminizi yazın...")
+        
         st.divider()
-        if st.button("Ortak Havuzu Temizle"):
-            for f in glob.glob(f"{SAVE_DIR}/*.png"): os.remove(f)
-            st.rerun()
+        st.header("🔐 Yetkili Erişimi")
+        admin_auth = st.text_input("Yönetici Şifresi:", type="password")
+        
+        if admin_auth == ADMIN_PASSWORD:
+            st.success("Yönetici girişi yapıldı.")
+            if st.button("Tüm Havuzu Temizle"):
+                for f in glob.glob(f"{SAVE_DIR}/*.png"): os.remove(f)
+                st.rerun()
+        elif admin_auth != "":
+            st.error("Hatalı şifre!")
 
+    # --- ANA ANALİZ EKRANI ---
     uploaded = st.file_uploader("Termal Görüntü Yükleyin", type=["jpg", "png", "jpeg"])
 
     if uploaded:
@@ -87,7 +98,6 @@ else:
         else:
             pil_img = Image.open(uploaded).convert("RGB")
             with st.spinner("Yapay zeka analiz ediyor..."):
-                # Görüntü İşleme Başlangıcı
                 nobg = remove(pil_img).convert("RGB")
                 gray = cv2.cvtColor(np.array(nobg), cv2.COLOR_RGB2GRAY)
                 blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -97,12 +107,10 @@ else:
                 res_img = np.array(pil_img).copy()
                 p_say, s_say = 0, 0
                 
-                # Kontur Döngüsü ve Tahmin
                 for cnt in contours:
                     if cv2.contourArea(cnt) < 1000: continue
                     x, y, w, h = cv2.boundingRect(cnt)
                     crop = gray[y:y+h, x:x+w]
-                    
                     feats = extract_features(crop)
                     f_scaled = scaler.transform(feats)
                     pred = model.predict(f_scaled)[0]
@@ -115,39 +123,37 @@ else:
                     cv2.rectangle(res_img, (x, y), (x+w, y+h), color, 8)
                     cv2.putText(res_img, label, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
 
-                # DOSYAYA KAYDET (Ortak Havuz İçin)
+                # Ortak Havuza Kaydet
                 timestamp = int(time.time())
-                # Dosya adı: analiz_havuzu/zaman_isim_pestisitli_pestisitsiz.png
                 clean_name = "".join(x for x in user_name if x.isalnum())
                 save_path = f"{SAVE_DIR}/{timestamp}_{clean_name}_{p_say}_{s_say}.png"
                 Image.fromarray(res_img).save(save_path)
 
-                # Ekran Sonuçları
+                # Sonuçları Göster
                 c1, c2 = st.columns([2, 1])
-                with c1: st.image(res_img, caption="Analiziniz Başarıyla Tamamlandı", use_container_width=True)
+                with c1: st.image(res_img, caption="Analiz Sonucu", use_container_width=True)
                 with c2:
                     st.metric("🔴 PESTİSİTLİ", p_say)
                     st.metric("🟢 PESTİSİTSİZ", s_say)
-                    st.success("Analiz ortak havuza kaydedildi.")
 
-    # 6. ORTAK ANALİZ HAVUZU GÖSTERİMİ
-    st.divider()
-    st.subheader("🌐 Ortak Analiz Havuzu (Herkes Görebilir)")
-    
-    # Klasördeki tüm resimleri en yeni olan en üstte olacak şekilde çek
-    all_files = sorted(glob.glob(f"{SAVE_DIR}/*.png"), key=os.path.getmtime, reverse=True)
-    
-    if all_files:
-        for f in all_files:
-            fname = os.path.basename(f).replace(".png", "")
-            parts = fname.split("_")
-            if len(parts) >= 4:
-                # Dosya adından verileri ayıkla
-                u_name = parts[1]
-                p_val = parts[2]
-                s_val = parts[3]
-                
-                with st.expander(f"👤 Gönderen: {u_name} | 🔴 {p_val} | 🟢 {s_val}"):
-                    st.image(f, use_container_width=True)
+    # --- ŞİFRELİ ORTAK HAVUZ GÖRÜNÜMÜ ---
+    if admin_auth == ADMIN_PASSWORD:
+        st.divider()
+        st.subheader("🌐 Ortak Analiz Havuzu (Yönetici Paneli)")
+        
+        all_files = sorted(glob.glob(f"{SAVE_DIR}/*.png"), key=os.path.getmtime, reverse=True)
+        
+        if all_files:
+            for f in all_files:
+                fname = os.path.basename(f).replace(".png", "")
+                parts = fname.split("_")
+                if len(parts) >= 4:
+                    u_name, p_val, s_val = parts[1], parts[2], parts[3]
+                    with st.expander(f"👤 Gönderen: {u_name} | 🔴 {p_val} | 🟢 {s_val}"):
+                        st.image(f, use_container_width=True)
+        else:
+            st.info("Havuzda kayıtlı analiz bulunmuyor.")
     else:
-        st.info("Henüz ortak havuzda analiz bulunmuyor.")
+        # Şifre girilmediyse havuz gizli kalır
+        st.divider()
+        st.caption("Ortak analiz kayıtlarını görmek için yönetici girişi yapmalısınız.")
