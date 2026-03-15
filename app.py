@@ -47,7 +47,7 @@ assets = load_assets()
 # --- STREAMLIT CLOUD URL TESPİTİ ---
 # Cloud ortamında çalışan uygulamanın gerçek URL'sini manuel girmek en garantisidir
 # Buraya uygulamanın ".streamlit.app" ile biten linkini yapıştır
-APP_URL = "https://apple-class.streamlit.app" 
+APP_URL = "https://pestisit-kontrol.streamlit.app/" 
 
 query_params = st.query_params
 is_mobile = query_params.get("mode") == "mobile"
