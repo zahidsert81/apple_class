@@ -11,8 +11,9 @@ from PIL import Image
 from rembg import remove
 from skimage.feature import graycomatrix, graycoprops
 from scipy.stats import skew, kurtosis
+from datetime import datetime
 
-# 1. AYARLAR & GÜVENLİK
+# 1. TEMEL AYARLAR & GÜVENLİK
 st.set_page_config(page_title="Pestisit Analiz Laboratuvarı", page_icon="🧪", layout="wide")
 
 APP_URL = "https://pestisit-kontrol.streamlit.app" 
@@ -20,7 +21,7 @@ SAVE_DIR = "analiz_havuzu"
 MOBILE_UPLOAD_DIR = "mobil_aktarim"
 MODEL_FILE = "rf_model.pkl"
 SCALER_FILE = "scaler.pkl"
-ADMIN_PASSWORD = "zahid_analiz" # Burayı istediğin şifreyle değiştirebilirsin
+ADMIN_PASSWORD = "3681" # Belirlediğin şifre
 
 for d in [SAVE_DIR, MOBILE_UPLOAD_DIR]:
     if not os.path.exists(d): os.makedirs(d)
@@ -51,12 +52,11 @@ assets = load_assets()
 query_params = st.query_params
 if query_params.get("mode") == "mobile":
     st.markdown("### 📱 Mobil Veri Aktarımı")
-    m_file = st.file_uploader("Termal Görüntü Gönder", type=["jpg", "png", "jpeg"])
+    m_file = st.file_uploader("Fotoğraf Seç veya Çek", type=["jpg", "png", "jpeg"])
     if m_file:
         img = Image.open(m_file)
         img.save(os.path.join(MOBILE_UPLOAD_DIR, "transfer.png"))
         st.success("✅ Görüntü aktarıldı!")
-        st.balloons()
     st.stop()
 
 # --- MASAÜSTÜ ARAYÜZÜ ---
@@ -71,40 +71,54 @@ with col_r:
 
 st.divider()
 
-# TABS (Sekmeler) Ekleme
-tab1, tab2 = st.tabs(["🔍 Analiz Paneli", "📂 Veri Arşivi & Yönetim"])
-
-# --- TAB 1: ANALİZ PANELİ ---
-with tab1:
-    m_col, s_col = st.columns([3, 1])
+# --- YAN MENÜ (SIDEBAR) ---
+with st.sidebar:
+    st.header("🛂 Kontrol Paneli")
     
-    with s_col:
-        st.subheader("📲 Mobil Bağlantı")
-        qr = qrcode.make(f"{APP_URL}/?mode=mobile")
-        buf = BytesIO()
-        qr.save(buf, format="PNG")
-        st.image(buf, caption="Okut ve Fotoğraf Gönder")
-        
-        st.divider()
-        sens = st.slider("Hassasiyet Ayarı", 0.1, 0.9, 0.45)
-        
-        m_path = os.path.join(MOBILE_UPLOAD_DIR, "transfer.png")
-        if os.path.exists(m_path):
-            st.warning("📥 Yeni mobil veri var!")
-            if st.button("Havuzuna Al"):
-                Image.open(m_path).save(os.path.join(SAVE_DIR, "temp_analysis.png"))
-                st.rerun()
+    # "Veri Gönder" butonu ile yükleme alanını aç/kapat (Session State kullanarak yenilemeden yapıyoruz)
+    if "show_upload" not in st.session_state:
+        st.session_state.show_upload = False
 
-    with m_col:
-        up_file = st.file_uploader("Dosya Yükle", type=["jpg", "png", "jpeg"])
-        source_img = None
-        if up_file: source_img = Image.open(up_file)
-        elif os.path.exists(os.path.join(SAVE_DIR, "temp_analysis.png")):
-            source_img = Image.open(os.path.join(SAVE_DIR, "temp_analysis.png"))
+    if st.button("📤 Veri Gönder / Yükle"):
+        st.session_state.show_upload = not st.session_state.show_upload
 
-        if source_img and assets:
+    st.divider()
+    st.subheader("📲 Mobil Bağlantı")
+    qr = qrcode.make(f"{APP_URL}/?mode=mobile")
+    buf = BytesIO()
+    qr.save(buf, format="PNG")
+    st.image(buf, caption="Okut ve Fotoğraf Gönder")
+    
+    st.divider()
+    sens = st.slider("Hassasiyet Ayarı", 0.1, 0.9, 0.45)
+
+# --- ANA ALAN ---
+source_img = None
+
+# Eğer yan menüden "Veri Gönder" seçildiyse yükleme alanını göster
+if st.session_state.show_upload:
+    st.info("💡 Buradan bilgisayarınızdan veya mobilden gelen veriyi seçebilirsiniz.")
+    up_file = st.file_uploader("Bilgisayardan Dosya Seç", type=["jpg", "png", "jpeg"])
+    
+    m_path = os.path.join(MOBILE_UPLOAD_DIR, "transfer.png")
+    if os.path.exists(m_path):
+        if st.button("📥 Mobilden Gelen Veriyi Kullan"):
+            source_img = Image.open(m_path)
+            # Analiz edilecek geçici bir yere kaydet
+            source_img.save(os.path.join(SAVE_DIR, "temp_current.png"))
+    
+    if up_file:
+        source_img = Image.open(up_file)
+        source_img.save(os.path.join(SAVE_DIR, "temp_current.png"))
+
+# Analiz Süreci
+if os.path.exists(os.path.join(SAVE_DIR, "temp_current.png")):
+    source_img = Image.open(os.path.join(SAVE_DIR, "temp_current.png"))
+    
+    if st.button("🔍 Analizi Başlat"):
+        if assets:
             model, scaler = assets
-            with st.spinner("Analiz ediliyor..."):
+            with st.spinner("YZ Analizi Yapılıyor..."):
                 p_img = source_img.convert("RGB")
                 nb = remove(p_img).convert("RGB")
                 gray = cv2.cvtColor(np.array(nb), cv2.COLOR_RGB2GRAY)
@@ -121,56 +135,66 @@ with tab1:
                     prob = model.predict_proba(f_sc)[0][1]
                     pred = 1 if prob >= sens else 0
                     
-                    lbl = "PESTISITLI" if pred == 1 else "PESTISITSIZ"
+                    lbl = "PESTISITLI" if pred == 1 else "TEMIZ"
                     clr = (255, 0, 0) if pred == 1 else (0, 255, 0)
                     if pred == 1: p_count += 1
                     else: s_count += 1
                     cv2.rectangle(res, (x,y), (x+w,y+h), clr, 12)
                     cv2.putText(res, lbl, (x, y-15), cv2.FONT_HERSHEY_SIMPLEX, 1.4, clr, 4)
 
-                st.image(res, use_container_width=True)
+                st.image(res, caption="Analiz Sonucu", use_container_width=True)
                 
-                # OTOMATİK ARŞİVLEME
-                save_name = f"RES_{int(time.time())}_P{p_count}_S{s_count}.png"
+                # ARŞİVE KAYDET (Tarih ve Saat ile)
+                now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                save_name = f"ARŞİV_{now}_P{p_count}_S{s_count}.png"
                 Image.fromarray(res).save(os.path.join(SAVE_DIR, save_name))
-                st.success(f"Analiz tamamlandı ve arşive kaydedildi: {save_name}")
+                st.success(f"Analiz başarıyla arşive eklendi: {now}")
+                
+                # Temizlik
+                os.remove(os.path.join(SAVE_DIR, "temp_current.png"))
+                if os.path.exists(m_path): os.remove(m_path)
 
-# --- TAB 2: VERİ ARŞİVİ (YÖNETİCİ ŞİFRESİ İLE) ---
-with tab2:
-    st.subheader("🔐 Yönetici Girişi")
-    pwd = st.text_input("Şifreyi Giriniz:", type="password")
+st.divider()
+
+# --- ŞİFRELİ ARŞİV BÖLÜMÜ ---
+st.subheader("📂 Veri Arşivi (Şifreli Erişim)")
+with st.expander("Arşivi Görüntülemek İçin Tıklayın"):
+    pwd = st.text_input("Yönetici Şifresi:", type="password")
     
     if pwd == ADMIN_PASSWORD:
-        st.success("Yönetici Yetkisi Onaylandı.")
-        
-        # 1. Havuzu Listele
-        files = [f for f in os.listdir(SAVE_DIR) if f.startswith("RES_")]
-        st.write(f"Toplam Kayıtlı Analiz: {len(files)}")
+        st.success("Erişim Onaylandı.")
+        files = sorted([f for f in os.listdir(SAVE_DIR) if f.startswith("ARŞİV_")], reverse=True)
         
         if files:
-            # 2. ZIP İndirme Butonu
+            # ZIP OLUŞTURMA
             zip_buffer = BytesIO()
             with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
                 for f in files:
-                    file_path = os.path.join(SAVE_DIR, f)
-                    zip_file.write(file_path, f)
+                    zip_file.write(os.path.join(SAVE_DIR, f), f)
             
             st.download_button(
-                label="📥 Tüm Arşivi İndir (ZIP)",
+                label="📥 Tüm Analizleri ZIP Olarak İndir",
                 data=zip_buffer.getvalue(),
-                file_name="pestisit_analiz_arsivi.zip",
+                file_name="pestisit_rapor_arsivi.zip",
                 mime="application/zip"
             )
-            
-            # 3. Görsel Galeri
-            st.divider()
-            cols = st.columns(3)
-            for i, f in enumerate(files[-6:]): # Son 6 kaydı göster
-                with cols[i % 3]:
-                    st.image(os.path.join(SAVE_DIR, f), caption=f)
-                    
-            if st.button("🗑️ Tüm Arşivi Temizle"):
-                for f in files: os.remove(os.path.join(SAVE_DIR, f))
-                st.rerun()
+
+            # Liste Görünümü
+            for f in files:
+                # Dosya isminden tarih ve sonucu ayıkla
+                parts = f.replace(".png", "").split("_")
+                tarih = parts[1]
+                saat = parts[2].replace("-", ":")
+                sonuc = f"Pestisitli: {parts[3][1:]}, Sağlıklı: {parts[4][1:]}"
+                
+                col1, col2, col3 = st.columns([2, 3, 1])
+                col1.write(f"📅 {tarih} | 🕒 {saat}")
+                col2.write(f"📊 {sonuc}")
+                with col3:
+                    with open(os.path.join(SAVE_DIR, f), "rb") as file:
+                        st.download_button("💾 İndir", file, file_name=f, key=f)
+                st.divider()
+        else:
+            st.info("Henüz kaydedilmiş bir analiz bulunmamaktadır.")
     elif pwd != "":
         st.error("Hatalı Şifre!")
