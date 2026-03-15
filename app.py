@@ -4,69 +4,48 @@ import time
 import numpy as np
 import cv2
 import pickle
-import glob
-import pandas as pd
+import qrcode
+from io import BytesIO
 from PIL import Image
 from rembg import remove
 from skimage.feature import graycomatrix, graycoprops
 from scipy.stats import skew, kurtosis
+import socket
 
-# 1. AYARLAR
-st.set_page_config(page_title="Pestisit Analiz & Eğitim", layout="wide")
+# 1. SAYFA VE DİZİN AYARLARI
+st.set_page_config(page_title="Pestisit Analiz Laboratuvarı", page_icon="🧪", layout="wide")
+
 SAVE_DIR = "analiz_havuzu"
+MOBILE_UPLOAD_DIR = "mobil_aktarim"
 MODEL_FILE = "rf_model.pkl"
 SCALER_FILE = "scaler.pkl"
 
-if not os.path.exists(SAVE_DIR):
-    os.makedirs(SAVE_DIR)
+for d in [SAVE_DIR, MOBILE_UPLOAD_DIR]:
+    if not os.path.exists(d): os.makedirs(d)
 
-# 2. ÖZELLİK ÇIKARMA (Eski Model Uyumlu - 11 Parametre)
+# 2. YEREL IP ADRESİNİ BULMA (QR Kod İçin)
+def get_local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except: return "localhost"
+
+# 3. ÖZELLİK ÇIKARMA (Eski Model Uyumlu 11 Özellik)
 def extract_features(img_gray):
     img_gray = cv2.medianBlur(img_gray, 5)
     img_8 = cv2.normalize(img_gray, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-    
-    # GLCM Özellikleri (6 adet)
     glcm = graycomatrix(img_8, distances=[1], angles=[0], symmetric=True, normed=True)
-    glcm_feats = [graycoprops(glcm, p)[0, 0] for p in ['contrast', 'dissimilarity', 'homogeneity', 'energy', 'correlation', 'ASM']]
-    
-    # İstatistiksel Özellikler (4 adet)
+    glcm_features = [graycoprops(glcm, p)[0, 0] for p in ['contrast', 'dissimilarity', 'homogeneity', 'energy', 'correlation', 'ASM']]
     flat = img_gray.flatten()
     stats = [np.mean(flat), np.std(flat), skew(flat), kurtosis(flat)]
-    
-    # Kenar Yoğunluğu (1 adet)
     edges = cv2.Canny(img_8, 50, 150)
-    density = np.sum(edges > 0) / edges.size
-    
-    return np.array(glcm_feats + stats + [density]).reshape(1, -1)
+    edge_density = np.sum(edges > 0) / edges.size
+    return np.array(glcm_features + stats + [edge_density]).reshape(1, -1)
 
-# 3. MEVCUT MODELE EKLEME YAPMA FONKSİYONU
-def update_existing_model(model, scaler):
-    files = glob.glob(f"{SAVE_DIR}/*.png")
-    if len(files) < 3:
-        return False, "Eğitim için havuzda en az 3 fotoğraf olmalı."
-    
-    X_new, y_new = [], []
-    for f in files:
-        try:
-            # Dosya adından etiketi çöz (Örn: timestamp_isim_1_0.png -> 1=Pestisitli)
-            parts = os.path.basename(f).split("_")
-            label = 1 if int(parts[2]) > int(parts[3]) else 0
-            
-            img = cv2.imread(f, cv2.IMREAD_GRAYSCALE)
-            if img is not None:
-                feats = extract_features(img)
-                X_new.append(feats[0])
-                y_new.append(label)
-        except: continue
-    
-    if len(X_new) > 0:
-        # Mevcut modelin üzerine yeni verilerle fit (eğitim) yapıyoruz
-        model.fit(X_new, y_new) 
-        with open(MODEL_FILE, "wb") as f_m: pickle.dump(model, f_m)
-        return True, f"Model {len(X_new)} yeni veriyle güncellendi!"
-    return False, "Veri işlenemedi."
-
-# 4. YÜKLEME
+# 4. VARLIKLARI YÜKLE
 @st.cache_resource
 def load_assets():
     if os.path.exists(MODEL_FILE) and os.path.exists(SCALER_FILE):
@@ -76,54 +55,116 @@ def load_assets():
     return None
 
 assets = load_assets()
-if assets:
-    model, scaler = assets
+
+# --- SAYFA YÖNLENDİRMESİ (MOBİL/MASAÜSTÜ) ---
+query_params = st.query_params
+is_mobile = query_params.get("mode") == "mobile"
+
+if is_mobile:
+    # 📱 MOBİL YÜKLEME ARAYÜZÜ
+    st.markdown("<h2 style='text-align: center; color: #1E3A8A;'>📱 Mobil Aktarım Paneli</h2>", unsafe_allow_html=True)
+    st.info("Kameranızı açın veya termal fotoğrafı seçin.")
     
-    with st.sidebar:
-        st.header("⚙️ Yönetim")
-        user = st.text_input("Operatör:", "Muhammed")
-        # Hassasiyet Ayarı: Hep temiz diyorsa 0.3'e çekin
-        sens = st.slider("Tespit Hassasiyeti", 0.1, 0.9, 0.45)
+    mobile_file = st.file_uploader("Fotoğraf Gönder", type=["jpg", "png", "jpeg"])
+    if mobile_file:
+        img = Image.open(mobile_file)
+        img.save(os.path.join(MOBILE_UPLOAD_DIR, "transfer.png"))
+        st.success("✅ Fotoğraf başarıyla bilgisayara aktarıldı!")
+        st.balloons()
+
+else:
+    # 💻 ANA BİLGİSAYAR ARAYÜZÜ
+    
+    # ÜST PANEL (LOGOLAR)
+    col_l, col_m, col_r = st.columns([1, 4, 1])
+    with col_l:
+        if os.path.exists("TÜBİTAK_logo.svg.png"): st.image("TÜBİTAK_logo.svg.png", width=120)
+    with col_m:
+        st.markdown("<h1 style='text-align: center; color: #1E3A8A; margin-bottom: 0;'>Pestisit Tespit Sistemi</h1>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: #64748B; font-weight: bold;'>Muhammed Zahid SERT | Gıda Güvenliği Analiz Modülü</p>", unsafe_allow_html=True)
+    with col_r:
+        if os.path.exists("images.jpg"): st.image("images.jpg", width=120)
+
+    st.divider()
+
+    # ANA GÖVDE
+    col_left, col_right = st.columns([3, 1])
+
+    with col_right:
+        st.markdown("### 📲 Telefon Bağlantısı")
+        ip = get_local_ip()
+        # Not: Streamlit varsayılan 8501 portunu kullanır
+        mobile_url = f"http://{ip}:8501/?mode=mobile"
+        
+        qr = qrcode.make(mobile_url)
+        buf = BytesIO()
+        qr.save(buf, format="PNG")
+        st.image(buf, caption="QR Kodu Okutun")
+        st.caption(f"Manuel Erişim: {mobile_url}")
         
         st.divider()
-        if st.button("🚀 Mevcut Modeli Güncelle"):
-            ok, msg = update_existing_model(model, scaler)
-            st.info(msg)
+        sens = st.slider("Hassasiyet Ayarı", 0.1, 0.9, 0.45)
+        st.info("Eğer her elmaya temiz diyorsa bu ayarı düşürün.")
 
-    # --- ANALİZ ---
-    up = st.file_uploader("Fotoğraf Yükle", type=["jpg", "png", "jpeg"])
-    if up:
-        img_orig = Image.open(up).convert("RGB")
-        nobg = remove(img_orig).convert("RGB")
-        gray = cv2.cvtColor(np.array(nobg), cv2.COLOR_RGB2GRAY)
+    with col_left:
+        # Mobil dosya kontrolü
+        mobile_path = os.path.join(MOBILE_UPLOAD_DIR, "transfer.png")
         
-        _, mask = cv2.threshold(gray, 20, 255, cv2.THRESH_BINARY)
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        source_img = None
+        if os.path.exists(mobile_path):
+            st.success("📱 Mobilden yeni bir veri alındı!")
+            source_img = Image.open(mobile_path)
+            if st.button("📱 Gelen Fotoğrafı Analiz Et"):
+                # Analiz tetiklenecek
+                pass 
+            if st.button("🗑️ Mobilden Gelen Veriyi Sil"):
+                os.remove(mobile_path)
+                st.rerun()
         
-        res_img = np.array(img_orig).copy()
-        p_count, s_count = 0, 0
+        st.subheader("🖼️ Analiz Paneli")
+        uploaded = st.file_uploader("Veya Bilgisayardan Dosya Seçin", type=["jpg", "png", "jpeg"])
         
-        for cnt in contours:
-            if cv2.contourArea(cnt) < 1500: continue
-            x,y,w,h = cv2.boundingRect(cnt)
-            crop = gray[y:y+h, x:x+w]
-            
-            f_scaled = scaler.transform(extract_features(crop))
-            probs = model.predict_proba(f_scaled)[0]
-            
-            # Sürgüden gelen hassasiyete göre karar ver
-            pred = 1 if probs[1] >= sens else 0
-            
-            label = "PESTISITLI" if pred == 1 else "TEMIZ"
-            color = (0,0,255) if pred == 1 else (0,255,0)
-            if pred == 1: p_count += 1
-            else: s_count += 1
-            
-            cv2.rectangle(res_img, (x,y), (x+w,y+h), color, 10)
-            cv2.putText(res_img, label, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
+        if uploaded: source_img = Image.open(uploaded)
 
-        st.image(res_img, caption="Analiz Sonucu")
-        
-        # Gelecekteki eğitimler için otomatik kaydet
-        save_path = f"{SAVE_DIR}/{int(time.time())}_{user}_{p_count}_{s_count}.png"
-        Image.fromarray(res_img).save(save_path)
+        if source_img and assets:
+            model, scaler = assets
+            with st.spinner("YZ Termal Verileri İşliyor..."):
+                # Görüntü İşleme
+                pil_img = source_img.convert("RGB")
+                nobg = remove(pil_img).convert("RGB")
+                gray = cv2.cvtColor(np.array(nobg), cv2.COLOR_RGB2GRAY)
+                
+                _, mask = cv2.threshold(gray, 20, 255, cv2.THRESH_BINARY)
+                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                
+                res_img = np.array(pil_img).copy()
+                detaylar = []
+
+                for cnt in contours:
+                    if cv2.contourArea(cnt) < 1500: continue
+                    x,y,w,h = cv2.boundingRect(cnt)
+                    crop = gray[y:y+h, x:x+w]
+                    
+                    feats = extract_features(crop)
+                    f_scaled = scaler.transform(feats)
+                    probs = model.predict_proba(f_scaled)[0]
+                    
+                    pred = 1 if probs[1] >= sens else 0
+                    label = "PESTISITLI" if pred == 1 else "PESISITSIZ"
+                    color = (255, 0, 0) if pred == 1 else (0, 255, 0)
+                    
+                    detaylar.append({"Durum": label, "Güven": f"%{max(probs)*100:.1f}"})
+                    cv2.rectangle(res_img, (x,y), (x+w,y+h), color, 12)
+                    cv2.putText(res_img, label, (x, y-15), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 4)
+
+                # SONUÇ GÖSTERİMİ
+                st.image(res_img, use_container_width=True)
+                
+                if detaylar:
+                    cols = st.columns(len(detaylar))
+                    for i, d in enumerate(detaylar):
+                        with cols[i]:
+                            st.metric(f"Örnek {i+1}", d["Durum"], d["Güven"])
+
+        elif not assets:
+            st.error("⚠️ Model dosyaları eksik! rf_model.pkl ve scaler.pkl'yi yükleyin.")
