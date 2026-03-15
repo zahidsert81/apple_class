@@ -16,13 +16,16 @@ from scipy.stats import skew, kurtosis
 # 1. SAYFA AYARLARI
 st.set_page_config(page_title="Pestisit Analiz Lab", page_icon="🧪", layout="wide")
 
-# 2. AYARLAR
+# 2. AYARLAR & DİZİNLER
 ADMIN_PASSWORD = "1234" 
 SAVE_DIR = "analiz_havuzu"
+MODEL_FILE = "rf_model.pkl"
+SCALER_FILE = "scaler.pkl"
+
 if not os.path.exists(SAVE_DIR):
     os.makedirs(SAVE_DIR)
 
-# 3. ÖZELLİK ÇIKARMA (GLCM & İstatistiksel)
+# 3. ÖZELLİK ÇIKARMA (Modelin Anlayacağı Veri)
 def extract_features(img_gray):
     img_8 = cv2.normalize(img_gray, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
     glcm = graycomatrix(img_8, distances=[1], angles=[0], symmetric=True, normed=True)
@@ -41,38 +44,50 @@ def extract_features(img_gray):
     features = glcm_features + hist_features + [edge_density]
     return np.array(features).reshape(1, -1)
 
-# 4. MODEL VE SCALER YÜKLEME
+# 4. MODELİ YENİDEN EĞİTME (Active Learning)
+def retrain_system(model, scaler):
+    files = glob.glob(f"{SAVE_DIR}/*.png")
+    if len(files) < 5:
+        return False, "Eğitim için havuzda en az 5 yeni analiz olmalı."
+    
+    X_new, y_new = [], []
+    for f in files:
+        try:
+            parts = os.path.basename(f).replace(".png", "").split("_")
+            label = 1 if int(parts[2]) > int(parts[3]) else 0 # Pestisit baskınsa 1
+            img = cv2.imread(f, cv2.IMREAD_GRAYSCALE)
+            if img is not None:
+                X_new.append(extract_features(img)[0])
+                y_new.append(label)
+        except: continue
+    
+    if X_new:
+        model.fit(X_new, y_new) # Modeli yeni verilerle güncelle
+        with open(MODEL_FILE, "wb") as f: pickle.dump(model, f)
+        return True, f"Başarılı! {len(X_new)} yeni veri YZ belleğine eklendi."
+    return False, "Veri işleme hatası."
+
+# 5. MODEL YÜKLEME
 @st.cache_resource
 def load_assets():
-    base_path = os.path.dirname(__file__)
-    m_p = os.path.join(base_path, "rf_model.pkl")
-    s_p = os.path.join(base_path, "scaler.pkl")
-    if os.path.exists(m_p) and os.path.exists(s_p):
-        with open(m_p, "rb") as f: m = pickle.load(f)
-        with open(s_p, "rb") as f: s = pickle.load(f)
+    if os.path.exists(MODEL_FILE) and os.path.exists(SCALER_FILE):
+        with open(MODEL_FILE, "rb") as f: m = pickle.load(f)
+        with open(SCALER_FILE, "rb") as f: s = pickle.load(f)
         return m, s
     return None
 
-# 5. ÜST BİLGİ PANELİ
-col_l, col_m, col_r = st.columns([1, 4, 1])
-with col_l:
-    if os.path.exists("TÜBİTAK_logo.svg.png"): st.image("TÜBİTAK_logo.svg.png", width=110)
-with col_m:
-    st.markdown("<h1 style='text-align: center; color: #1E3A8A; margin-bottom: 0;'>Pestisit Tespit Sistemi</h1>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align: center; color: #64748B;'>Muhammed Zahid SERT | Gıda Güvenliği Analiz Modülü</p>", unsafe_allow_html=True)
-with col_r:
-    if os.path.exists("images.jpg"): st.image("images.jpg", width=110)
+# 6. TASARIM VE ÜST PANEL
+st.markdown("<h1 style='text-align: center; color: #1E3A8A;'>Derin Odak: Kendi Kendini Eğiten Analiz Sistemi</h1>", unsafe_allow_html=True)
 
 assets = load_assets()
-
 if not assets:
-    st.error("⚠️ Kritik Hata: Model dosyaları (.pkl) bulunamadı. Lütfen dosyaları yükleyin.")
+    st.error("⚠️ Model dosyaları eksik! Lütfen rf_model.pkl ve scaler.pkl yükleyin.")
 else:
     model, scaler = assets
     
-    # --- YAN PANEL (KONTROL) ---
+    # --- SİDEBAR (YÖNETİCİ VE EĞİTİM) ---
     with st.sidebar:
-        st.header("🛂 Giriş Paneli")
+        st.header("🛂 Kontrol Merkezi")
         user_name = st.text_input("Analiz Sorumlusu:", placeholder="Adınız...")
         st.divider()
         
@@ -80,33 +95,41 @@ else:
         
         if not st.session_state.logged_in:
             admin_pw = st.text_input("Yönetici Şifresi:", type="password")
-            if st.button("Yönetici Girişi"):
+            if st.button("Sistemi Yönet"):
                 if admin_pw == ADMIN_PASSWORD:
                     st.session_state.logged_in = True
                     st.rerun()
         else:
-            st.success("Yönetici Modu Aktif")
-            if st.button("Oturumu Kapat"):
-                st.session_state.logged_in = False
-                st.rerun()
-            if st.button("🗑️ Arşivi Temizle"):
+            st.success("Yönetici Modu")
+            if st.button("🚀 MODELİ YENİ VERİLERLE EĞİT"):
+                success, msg = retrain_system(model, scaler)
+                if success: st.success(msg); st.balloons()
+                else: st.warning(msg)
+            
+            if st.button("🗑️ Arşivi Boşalt"):
                 for f in glob.glob(f"{SAVE_DIR}/*.png"): os.remove(f)
                 st.rerun()
+            if st.button("Çıkış Yap"):
+                st.session_state.logged_in = False
+                st.rerun()
 
-    # --- ANA ANALİZ BÖLÜMÜ ---
-    uploaded = st.file_uploader("Termal Görüntü Yükleyin", type=["jpg", "png", "jpeg"])
+    # --- ANALİZ AKIŞI ---
+    uploaded = st.file_uploader("Analiz için Termal Görüntü Yükleyin", type=["jpg", "png", "jpeg"])
 
     if uploaded and user_name:
         pil_img = Image.open(uploaded).convert("RGB")
-        with st.spinner("Yapay Zeka analiz yapıyor..."):
-            # Arka plan temizleme ve ön işleme
+        with st.spinner("Yapay Zeka Belleğini Kullanarak Analiz Yapıyor..."):
+            # İşleme ve Isı Haritası (Heatmap)
             nobg = remove(pil_img).convert("RGB")
-            gray = cv2.cvtColor(np.array(nobg), cv2.COLOR_RGB2GRAY)
+            img_np = np.array(nobg)
+            gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+            heatmap = cv2.applyColorMap(gray, cv2.COLORMAP_JET) # Bilimsel renk paleti
+            
             blur = cv2.GaussianBlur(gray, (5, 5), 0)
             _, th = cv2.threshold(blur, 10, 255, cv2.THRESH_BINARY)
             contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            res_img = np.array(pil_img).copy()
+            res_img = img_np.copy()
             detaylar = []
             
             for cnt in contours:
@@ -114,85 +137,64 @@ else:
                 x, y, w, h = cv2.boundingRect(cnt)
                 crop = gray[y:y+h, x:x+w]
                 
-                # Model Tahmini
                 feats = extract_features(crop)
                 f_scaled = scaler.transform(feats)
                 pred = model.predict(f_scaled)[0]
-                prob = model.predict_proba(f_scaled)[0] # Güven oranı
+                prob = model.predict_proba(f_scaled)[0]
                 
-                label = "PESTISITLI" if pred == 1 else "PESTISITSIZ"
+                label = "PESTISITLI" if pred == 1 else "TEMIZ"
                 color = (255, 0, 0) if pred == 1 else (0, 255, 0)
                 
                 detaylar.append({
-                    "Nesne": f"Örnek {len(detaylar)+1}",
+                    "Nesne": f"Elma {len(detaylar)+1}",
                     "Durum": label,
                     "Güven": f"%{max(prob)*100:.1f}",
-                    "Doku": f"{feats[0][0]:.2f}",
                     "Renk": "#fee2e2" if pred == 1 else "#dcfce7",
                     "Border": "#991b1b" if pred == 1 else "#166534"
                 })
                 
                 cv2.rectangle(res_img, (x, y), (x+w, y+h), color, 12)
-                cv2.putText(res_img, f"#{len(detaylar)} {label}", (x, y-15), cv2.FONT_HERSHEY_SIMPLEX, 1.6, color, 4)
+                cv2.putText(res_img, label, (x, y-15), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 4)
 
-            # --- SONUÇLARI GÖSTER ---
-            st.subheader("📊 Analitik Raporlama")
-            col_res1, col_res2 = st.columns(2)
-            with col_res1: st.image(uploaded, caption="Giriş Verisi", use_container_width=True)
-            with col_res2: st.image(res_img, caption="Analiz Sonucu", use_container_width=True)
+            # Raporlama Ekranı
+            st.subheader("📝 Aktif Analiz Raporu")
+            c1, c2, c3 = st.columns(3)
+            with c1: st.image(uploaded, caption="Orijinal Veri", use_container_width=True)
+            with c2: st.image(heatmap, caption="Isı Haritası (Heatmap)", use_container_width=True)
+            with c3: st.image(res_img, caption="YZ Teşhis", use_container_width=True)
             
             st.divider()
             
-            # Nesne Kartları (2 elma için ideal görünüm)
+            # Kartlar
             if detaylar:
-                card_cols = st.columns(len(detaylar))
+                cols = st.columns(len(detaylar))
                 for i, d in enumerate(detaylar):
-                    with card_cols[i]:
+                    with cols[i]:
                         st.markdown(f"""
-                            <div style="background-color:{d['Renk']}; padding:25px; border-radius:15px; border:3px solid {d['Border']}; text-align:center;">
-                                <h2 style="color:{d['Border']}; margin:0;">{d['Nesne']}</h2>
-                                <p style="font-size:24px; font-weight:bold; color:{d['Border']}">{d['Durum']}</p>
-                                <p style="margin:5px 0; color:#333;">🎯 Güven Skoru: <b>{d['Güven']}</b></p>
-                                <p style="margin:0; color:#555; font-size:14px;"> Doku Pürüzlülüğü: {d['Doku']}</p>
+                            <div style="background-color:{d['Renk']}; padding:20px; border-radius:15px; border:3px solid {d['Border']}; text-align:center;">
+                                <h3 style="color:{d['Border']};">{d['Nesne']}</h3>
+                                <b style="font-size:22px;">{d['Durum']}</b><br>
+                                <span>Güven Oranı: {d['Güven']}</span>
                             </div>
                         """, unsafe_allow_html=True)
 
-            # Kayıt işlemi
+            # Otomatik Kayıt (Öğrenme için veri biriktirir)
             p_say = sum(1 for d in detaylar if d["Durum"] == "PESTISITLI")
             s_say = len(detaylar) - p_say
-            clean_name = "".join(x for x in user_name if x.isalnum())
-            save_path = f"{SAVE_DIR}/{int(time.time())}_{clean_name}_{p_say}_{s_say}.png"
+            save_path = f"{SAVE_DIR}/{int(time.time())}_{user_name}_{p_say}_{s_say}.png"
             Image.fromarray(res_img).save(save_path)
 
-    # --- YÖNETİCİ ARŞİVİ ---
+    # --- ARŞİV VE TABLO ---
     if st.session_state.logged_in:
         st.divider()
-        st.header("📂 Laboratuvar Arşiv Havuzu")
-        
+        st.header("📂 Veri Havuzu ve Eğitim Kayıtları")
         files = sorted(glob.glob(f"{SAVE_DIR}/*.png"), key=os.path.getmtime, reverse=True)
-        
         if files:
-            # Toplu ZIP İndirme
-            zip_buf = BytesIO()
-            with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED, False) as zip_f:
-                for f in files: zip_f.write(f, os.path.basename(f))
-            st.download_button("📦 Tüm Arşivi ZIP Olarak İndir", data=zip_buf.getvalue(), file_name="analiz_arsivi.zip", mime="application/zip")
-            
-            # Tablo Görünümü
-            data = []
+            df = []
             for f in files:
                 p = os.path.basename(f).replace(".png", "").split("_")
                 if len(p) >= 4:
-                    data.append({"Zaman": time.ctime(int(p[0])), "Sorumlu": p[1], "Pestisitli": p[2], "Temiz": p[3]})
-            st.table(pd.DataFrame(data))
-
-            # Detaylı Görsel İnceleme
-            for f in files:
-                fname = os.path.basename(f)
-                with st.expander(f"İncele: {fname}"):
-                    st.image(f, use_container_width=True)
-                    with open(f, "rb") as fb:
-                        st.download_button("💾 Görseli İndir", data=fb, file_name=fname, mime="image/png", key=f"btn_{fname}")
+                    df.append({"Tarih": time.ctime(int(p[0])), "Sorumlu": p[1], "Pestisitli": p[2], "Temiz": p[3]})
+            st.table(pd.DataFrame(df))
         else:
-            st.info("Arşiv henüz boş.")
-
+            st.info("Havuzda henüz veri yok.")
