@@ -58,38 +58,32 @@ def load_assets():
         return m, s
     return None
 
-# --- MOBİL ARAYÜZ (GPS EKLENDİ) ---
+# --- MOBİL ARAYÜZ (OTOMATİK GPS) ---
 if is_mobile:
     st.markdown("<h2 style='text-align: center;'>📲 Mobil Veri Gönderimi</h2>", unsafe_allow_html=True)
     
-    # Konum bilgisini almak için HTML5 Geolocation API kullanıyoruz
-    st.markdown("""
-        <script>
-        function getLocation() {
-          if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(showPosition);
-          }
-        }
-        function showPosition(position) {
-          const lat = position.coords.latitude;
-          const lon = position.coords.longitude;
-          window.parent.postMessage({type: 'location', lat: lat, lon: lon}, '*');
-        }
-        getLocation();
-        </script>
-    """, unsafe_allow_html=True)
-
+    # HTML5 ve JS ile GPS verisini sessizce çekip Streamlit'e aktaran bileşen
+    from streamlit_js_eval import streamlit_js_eval, get_geolocation
+    
+    loc = get_geolocation()
+    
     mobile_user = st.text_input("Analiz Sorumlusu Adı:", key="mob_user")
-    # Kullanıcıdan koordinatları manuel onay gibi almak için gizli olmayan bir alan
-    coords = st.text_input("Konum (Opsiyonel - örn: 40.84, 31.15):", placeholder="Harita verisi için boş bırakılabilir")
+    
+    if loc:
+        lat = loc['coords']['latitude']
+        lon = loc['coords']['longitude']
+        st.success(f"📍 Konum Sabitlendi: {lat:.4f}, {lon:.4f}")
+        coords_str = f"{lat:.4f}_{lon:.4f}"
+    else:
+        st.warning("⚠️ Konum alınıyor... Lütfen tarayıcıdan izin verin.")
+        coords_str = "no-gps"
+
     mob_file = st.file_uploader("Termal Fotoğrafı Çek veya Seç", type=["jpg", "png", "jpeg"], key="mob_file")
     
     if mob_file and mobile_user:
-        with st.spinner("Dosya ve konum sunucuya aktarılıyor..."):
+        with st.spinner("Dosya ve GPS verisi aktarılıyor..."):
             img = Image.open(mob_file)
-            # Dosya ismine koordinatları da gömüyoruz
-            loc_tag = coords.replace(",", "-").replace(" ", "") if coords else "no-gps"
-            temp_path = f"{SAVE_DIR}/TEMP_{int(time.time())}_{mobile_user}_{loc_tag}.png"
+            temp_path = f"{SAVE_DIR}/TEMP_{int(time.time())}_{mobile_user}_{coords_str}.png"
             img.save(temp_path)
             st.success("✅ Veri başarıyla gönderildi!")
             st.balloons()
@@ -118,11 +112,12 @@ else:
         
         st.divider()
         st.subheader("📲 Telefondan Fotoğraf Gönder")
+        # QR kodu taratınca doğrudan mobile mode açılır
         target_url = "https://pestisit-kontrol.streamlit.app/?mode=mobile"
         qr = qrcode.make(target_url)
         buf = BytesIO()
         qr.save(buf, format="PNG")
-        st.image(buf, caption="Telefonla Tara & Yükle")
+        st.image(buf, caption="Telefonla Tara & GPS'li Yükle")
         st.divider()
 
         if 'logged_in' not in st.session_state: st.session_state.logged_in = False
@@ -141,19 +136,19 @@ else:
                 for f in glob.glob(f"{SAVE_DIR}/*.png"): os.remove(f)
                 st.rerun()
 
-    # MOBİL'DEN GELEN DOSYALARI YAKALAMA VE KONUMU AYRIŞTIRMA
+    # MOBİL VERİLERİ YAKALAMA
     temp_files = glob.glob(f"{SAVE_DIR}/TEMP_*.png")
     uploaded = st.file_uploader("Bilgisayardan Fotoğraf Yükleyin", type=["jpg", "png", "jpeg"])
     current_gps = "Bilinmiyor"
     
-    source_file = None
     if temp_files:
         source_file = temp_files[0]
-        fname_parts = os.path.basename(source_file).split("_")
-        if len(fname_parts) >= 4:
-            current_gps = fname_parts[3].replace(".png", "")
+        fname_parts = os.path.basename(source_file).replace(".png", "").split("_")
+        # Parçalar: [TEMP, Zaman, Kullanıcı, Lat, Lon]
+        if len(fname_parts) >= 5:
+            current_gps = f"{fname_parts[3]}, {fname_parts[4]}"
         
-        st.warning(f"🔔 Mobil Veri Geldi! Sorumlu: {fname_parts[2]} | Konum: {current_gps}")
+        st.warning(f"🔔 Mobil Veri Geldi! Sorumlu: {fname_parts[2]} | GPS: {current_gps}")
         if st.button("Mobil Veriyi İşle"):
             uploaded = source_file
     
@@ -162,7 +157,6 @@ else:
         with st.spinner("Analiz ediliyor..."):
             nobg = remove(pil_img).convert("RGB")
             gray = cv2.cvtColor(np.array(nobg), cv2.COLOR_RGB2GRAY)
-            # ... (Özellik çıkarma ve tahmin bölümleri aynı kalıyor)
             blur = cv2.GaussianBlur(gray, (5, 5), 0)
             _, th = cv2.threshold(blur, 10, 255, cv2.THRESH_BINARY)
             contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -183,45 +177,20 @@ else:
                 detaylar.append({"Durum": label, "Güven": f"%{max(prob)*100:.1f}", "Renk": "#fee2e2" if pred == 1 else "#dcfce7", "Border": "#991b1b" if pred == 1 else "#166534"})
                 cv2.rectangle(res_img, (x, y), (x+w, y+h), color, 12)
 
-            # --- SONUÇ PANELİ VE KONUM GÖSTERİMİ ---
             st.subheader("📊 Analitik Raporlama")
-            if current_gps != "Bilinmiyor" and "no-gps" not in current_gps:
-                st.info(f"📍 Analiz Edilen Bölge Koordinatı: {current_gps}")
-                # Google Maps linki ekleyelim
-                map_url = f"https://www.google.com/maps/search/?api=1&query={current_gps.replace('-', ',')}"
-                st.markdown(f"[🌍 Haritada Görüntüle]({map_url})")
+            if current_gps != "Bilinmiyor":
+                st.info(f"📍 Üretim Alanı Koordinatı: {current_gps}")
+                map_url = f"https://www.google.com/maps?q={current_gps.replace(' ', '')}"
+                st.markdown(f"[🌍 Haritada Gör]({map_url})")
 
             col_res1, col_res2 = st.columns(2)
             with col_res1: st.image(uploaded, use_container_width=True)
             with col_res2: st.image(res_img, use_container_width=True)
 
-            # Kayıt (Dosya ismine konumu da ekliyoruz)
             p_say = sum(1 for d in detaylar if d["Durum"] == "PESTISITLI")
             s_say = len(detaylar) - p_say
-            clean_gps = current_gps.replace("-", "_")
-            save_path = f"{SAVE_DIR}/{int(time.time())}_{user_name}_{p_say}_{s_say}_{clean_gps}.png"
+            save_path = f"{SAVE_DIR}/{int(time.time())}_{user_name}_{p_say}_{s_say}_{current_gps.replace(', ', '_')}.png"
             Image.fromarray(res_img).save(save_path)
             
             if isinstance(uploaded, str) and "TEMP_" in uploaded:
                 os.remove(uploaded)
-
-    # --- ARŞİV TABLOSU (KONUM SÜTUNU EKLENDİ) ---
-    if st.session_state.logged_in:
-        st.divider()
-        st.header("📂 Laboratuvar Arşiv Havuzu")
-        files = sorted(glob.glob(f"{SAVE_DIR}/*.png"), key=os.path.getmtime, reverse=True)
-        files = [f for f in files if "TEMP_" not in f]
-        
-        if files:
-            data = []
-            for f in files:
-                p = os.path.basename(f).replace(".png", "").split("_")
-                if len(p) >= 5:
-                    data.append({
-                        "Zaman": time.ctime(int(p[0])), 
-                        "Sorumlu": p[1], 
-                        "Pestisitli": p[2], 
-                        "Temiz": p[3],
-                        "Konum (GPS)": p[4] if p[4] != "no-gps" else "Belirtilmedi"
-                    })
-            st.table(pd.DataFrame(data))
