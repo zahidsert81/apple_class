@@ -1,181 +1,197 @@
 import streamlit as st
 import os
 import time
-import qrcode
+import numpy as np
+import cv2
+import pickle
+import glob
+import pandas as pd
 import zipfile
 from io import BytesIO
 from PIL import Image
 from rembg import remove
-import cv2
-import numpy as np
-import pickle
-from datetime import datetime
-from scipy.stats import skew, kurtosis
 from skimage.feature import graycomatrix, graycoprops
+from scipy.stats import skew, kurtosis
 
-# 1. TEMEL AYARLAR
-st.set_page_config(page_title="Pestisit Analiz Laboratuvarı", page_icon="🧪", layout="wide")
-APP_URL = "https://pestisit-kontrol.streamlit.app" 
+# 1. SAYFA AYARLARI
+st.set_page_config(page_title="Pestisit Analiz Lab", page_icon="🧪", layout="wide")
+
+# 2. AYARLAR
+ADMIN_PASSWORD = "1234" 
 SAVE_DIR = "analiz_havuzu"
-MOBILE_UPLOAD_DIR = "mobil_aktarim"
-MODEL_FILE = "rf_model.pkl"
-SCALER_FILE = "scaler.pkl"
-ADMIN_PASSWORD = "3681"
+if not os.path.exists(SAVE_DIR):
+    os.makedirs(SAVE_DIR)
 
-for d in [SAVE_DIR, MOBILE_UPLOAD_DIR]:
-    if not os.path.exists(d): os.makedirs(d)
-
-# 2. ÖZELLİK ÇIKARMA
+# 3. ÖZELLİK ÇIKARMA (GLCM & İstatistiksel)
 def extract_features(img_gray):
     img_8 = cv2.normalize(img_gray, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
     glcm = graycomatrix(img_8, distances=[1], angles=[0], symmetric=True, normed=True)
-    glcm_feats = [graycoprops(glcm, p)[0, 0] for p in ['contrast', 'dissimilarity', 'homogeneity', 'energy', 'correlation', 'ASM']]
+    glcm_features = [
+        graycoprops(glcm, 'contrast')[0, 0],
+        graycoprops(glcm, 'dissimilarity')[0, 0],
+        graycoprops(glcm, 'homogeneity')[0, 0],
+        graycoprops(glcm, 'energy')[0, 0],
+        graycoprops(glcm, 'correlation')[0, 0],
+        graycoprops(glcm, 'ASM')[0, 0]
+    ]
     flat = img_gray.flatten()
-    stats = [np.mean(flat), np.std(flat), skew(flat), kurtosis(flat)]
-    edges = cv2.Canny(img_8, 50, 150)
-    density = np.sum(edges > 0) / edges.size
-    return np.array(glcm_feats + stats + [density]).reshape(1, -1)
+    hist_features = [np.mean(flat), np.std(flat), skew(flat), kurtosis(flat)]
+    edges = cv2.Canny(img_gray, 50, 150)
+    edge_density = np.sum(edges > 0) / edges.size
+    features = glcm_features + hist_features + [edge_density]
+    return np.array(features).reshape(1, -1)
 
+# 4. MODEL VE SCALER YÜKLEME
 @st.cache_resource
 def load_assets():
-    if os.path.exists(MODEL_FILE) and os.path.exists(SCALER_FILE):
-        with open(MODEL_FILE, "rb") as f: m = pickle.load(f)
-        with open(SCALER_FILE, "rb") as f: s = pickle.load(f)
+    base_path = os.path.dirname(__file__)
+    m_p = os.path.join(base_path, "rf_model.pkl")
+    s_p = os.path.join(base_path, "scaler.pkl")
+    if os.path.exists(m_p) and os.path.exists(s_p):
+        with open(m_p, "rb") as f: m = pickle.load(f)
+        with open(s_p, "rb") as f: s = pickle.load(f)
         return m, s
     return None
 
+# 5. ÜST BİLGİ PANELİ
+col_l, col_m, col_r = st.columns([1, 4, 1])
+with col_l:
+    if os.path.exists("TÜBİTAK_logo.svg.png"): st.image("TÜBİTAK_logo.svg.png", width=110)
+with col_m:
+    st.markdown("<h1 style='text-align: center; color: #1E3A8A; margin-bottom: 0;'>Pestisit Tespit Sistemi</h1>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align: center; color: #64748B;'>Muhammed Zahid SERT | Gıda Güvenliği Analiz Modülü</p>", unsafe_allow_html=True)
+with col_r:
+    if os.path.exists("images.jpg"): st.image("images.jpg", width=110)
+
 assets = load_assets()
 
-# --- MOBİL AKTARIM SAYFASI (LocalSend Mantığı) ---
-if st.query_params.get("mode") == "mobile":
-    st.markdown("### 📤 Hızlı Veri Aktarımı (LocalSend Mode)")
-    st.info("Kameranızı açın veya galeriden termal görüntüyü seçin.")
-    f = st.file_uploader("Dosya Seç", type=["jpg","png","jpeg"], label_visibility="collapsed")
-    if f:
-        with st.spinner("Aktarılıyor..."):
-            Image.open(f).save(os.path.join(MOBILE_UPLOAD_DIR, "transfer.png"))
-            st.success("✅ Veri saniyeler içinde ana sisteme iletildi!")
-            st.balloons()
-    st.stop()
-
-# --- MASAÜSTÜ ANA PANEL ---
-col_l, col_m, col_r = st.columns([1, 3, 1])
-with col_l:
-    if os.path.exists("TÜBİTAK_logo.svg.png"): st.image("TÜBİTAK_logo.svg.png", width=100)
-with col_m:
-    st.markdown("<h1 style='text-align: center; color: #1E3A8A;'>Pestisit Tespit Sistemi</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #64748B; font-weight: bold;'>Muhammed Zahid SERT | Gıda Güvenliği Modülü</p>", unsafe_allow_html=True)
-with col_r:
-    if os.path.exists("images.jpg"): st.image("images.jpg", width=100)
-
-st.divider()
-
-# --- YAN MENÜ (Dinamik Kontrol) ---
-with st.sidebar:
-    st.header("🔌 Bağlantı & Kontrol")
+if not assets:
+    st.error("⚠️ Kritik Hata: Model dosyaları (.pkl) bulunamadı. Lütfen dosyaları yükleyin.")
+else:
+    model, scaler = assets
     
-    # Bluetooth Simülasyonu
-    if "bt_connected" not in st.session_state: st.session_state.bt_connected = False
-    if not st.session_state.bt_connected:
-        if st.button("🔵 Cihaza Bağlan (Bluetooth)"):
-            with st.status("Cihaz aranıyor...", expanded=False) as s:
-                time.sleep(1); s.write("🔍 Pestisit_Scanner bulundu..."); time.sleep(1)
-                st.session_state.bt_connected = True
+    # --- YAN PANEL (KONTROL) ---
+    with st.sidebar:
+        st.header("🛂 Giriş Paneli")
+        user_name = st.text_input("Analiz Sorumlusu:", placeholder="Adınız...")
+        st.divider()
+        
+        if 'logged_in' not in st.session_state: st.session_state.logged_in = False
+        
+        if not st.session_state.logged_in:
+            admin_pw = st.text_input("Yönetici Şifresi:", type="password")
+            if st.button("Yönetici Girişi"):
+                if admin_pw == ADMIN_PASSWORD:
+                    st.session_state.logged_in = True
+                    st.rerun()
+        else:
+            st.success("Yönetici Modu Aktif")
+            if st.button("Oturumu Kapat"):
+                st.session_state.logged_in = False
                 st.rerun()
-    else:
-        st.success("📱 Cihaz Bağlı: Bluetooth V1")
-        if st.button("🔴 Bağlantıyı Kes"):
-            st.session_state.bt_connected = False
-            st.rerun()
-
-    st.divider()
-    
-    # LocalSend Butonu
-    if st.button("🚀 Veri Gönder / Yükle"):
-        st.session_state.show_up = not st.session_state.get("show_up", False)
-
-    st.divider()
-    st.subheader("📲 Hızlı Bağlantı QR")
-    qr = qrcode.make(f"{APP_URL}/?mode=mobile")
-    b = BytesIO(); qr.save(b, format="PNG")
-    st.image(b, caption="Telefonundan Dosya Gönder")
-    
-    sens = st.slider("Hassasiyet Ayarı", 0.1, 0.9, 0.45)
-
-# --- ANA ANALİZ AKIŞI ---
-m_path = os.path.join(MOBILE_UPLOAD_DIR, "transfer.png")
-
-if st.session_state.get("show_up"):
-    c1, c2 = st.columns(2)
-    with c1:
-        local_up = st.file_uploader("Bilgisayardan Yükle", type=["jpg","png","jpeg"])
-        if local_up: 
-            Image.open(local_up).save(os.path.join(SAVE_DIR, "current.png"))
-            st.rerun()
-    with c2:
-        if os.path.exists(m_path):
-            st.markdown("#### 📱 Telefondan Veri Geldi!")
-            st.image(m_path, width=150)
-            if st.button("📥 Veriyi Analize Al"):
-                os.rename(m_path, os.path.join(SAVE_DIR, "current.png"))
+            if st.button("🗑️ Arşivi Temizle"):
+                for f in glob.glob(f"{SAVE_DIR}/*.png"): os.remove(f)
                 st.rerun()
 
-# Analiz Ekranı
-cur_path = os.path.join(SAVE_DIR, "current.png")
-if os.path.exists(cur_path):
-    st.subheader("🖼️ Analiz Hazır")
-    img_ready = Image.open(cur_path)
-    st.image(img_ready, width=400)
-    
-    if st.button("🔍 ANALİZİ BAŞLAT"):
-        if assets:
-            model, scaler = assets
-            with st.spinner("Yapay Zeka İnceliyor..."):
-                p_img = img_ready.convert("RGB")
-                nb = remove(p_img).convert("RGB")
-                gray = cv2.cvtColor(np.array(nb), cv2.COLOR_RGB2GRAY)
-                _, mask = cv2.threshold(gray, 20, 255, cv2.THRESH_BINARY)
-                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                
-                res_img = np.array(p_img).copy()
-                p_count, s_count = 0, 0
-                for cnt in contours:
-                    if cv2.contourArea(cnt) < 1800: continue
-                    x,y,w,h = cv2.boundingRect(cnt)
-                    f_sc = scaler.transform(extract_features(gray[y:y+h, x:x+w]))
-                    pred = 1 if model.predict_proba(f_sc)[0][1] >= sens else 0
-                    
-                    lbl, clr = ("PESTISITLI", (255,0,0)) if pred == 1 else ("TEMIZ", (0,255,0))
-                    if pred == 1: p_count += 1
-                    else: s_count += 1
-                    cv2.rectangle(res_img, (x,y), (x+w,y+h), clr, 12)
-                    cv2.putText(res_img, lbl, (x, y-15), cv2.FONT_HERSHEY_SIMPLEX, 1.4, clr, 4)
+    # --- ANA ANALİZ BÖLÜMÜ ---
+    uploaded = st.file_uploader("Termal Görüntü Yükleyin", type=["jpg", "png", "jpeg"])
 
-                st.image(res_img, use_container_width=True)
-                
-                # ARŞİVE AT
-                now = datetime.now().strftime("%H-%M-%S")
-                save_name = f"ARŞİV_{now}_P{p_count}_S{s_count}.png"
-                Image.fromarray(res_img).save(os.path.join(SAVE_DIR, save_name))
-                os.remove(cur_path)
-                st.success(f"Analiz tamamlandı. Arşive eklendi: {now}")
+    if uploaded and user_name:
+        pil_img = Image.open(uploaded).convert("RGB")
+        with st.spinner("Yapay Zeka Mikroskobik Verileri İnceliyor..."):
+            # Arka plan temizleme ve ön işleme
+            nobg = remove(pil_img).convert("RGB")
+            gray = cv2.cvtColor(np.array(nobg), cv2.COLOR_RGB2GRAY)
+            blur = cv2.GaussianBlur(gray, (5, 5), 0)
+            _, th = cv2.threshold(blur, 10, 255, cv2.THRESH_BINARY)
+            contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-# --- ŞİFRELİ ARŞİV ---
-st.divider()
-with st.expander("📂 Kayıtlı Verilere Bak (Şifre: 3681)"):
-    pw = st.text_input("Giriş Yap:", type="password")
-    if pw == ADMIN_PASSWORD:
-        files = sorted([f for f in os.listdir(SAVE_DIR) if f.startswith("ARŞİV_")], reverse=True)
-        if files:
-            z_buf = BytesIO()
-            with zipfile.ZipFile(z_buf, "w") as zf:
-                for f in files: zf.write(os.path.join(SAVE_DIR, f), f)
-            st.download_button("📥 Tüm Arşivi İndir (ZIP)", z_buf.getvalue(), "analiz_arsivi.zip")
+            res_img = np.array(pil_img).copy()
+            detaylar = []
             
+            for cnt in contours:
+                if cv2.contourArea(cnt) < 1500: continue
+                x, y, w, h = cv2.boundingRect(cnt)
+                crop = gray[y:y+h, x:x+w]
+                
+                # Model Tahmini
+                feats = extract_features(crop)
+                f_scaled = scaler.transform(feats)
+                pred = model.predict(f_scaled)[0]
+                prob = model.predict_proba(f_scaled)[0] # Güven oranı
+                
+                label = "PESTISITLI" if pred == 1 else "TEMIZ"
+                color = (255, 0, 0) if pred == 1 else (0, 255, 0)
+                
+                detaylar.append({
+                    "Nesne": f"Örnek {len(detaylar)+1}",
+                    "Durum": label,
+                    "Güven": f"%{max(prob)*100:.1f}",
+                    "Doku": f"{feats[0][0]:.2f}",
+                    "Renk": "#fee2e2" if pred == 1 else "#dcfce7",
+                    "Border": "#991b1b" if pred == 1 else "#166534"
+                })
+                
+                cv2.rectangle(res_img, (x, y), (x+w, y+h), color, 12)
+                cv2.putText(res_img, f"#{len(detaylar)} {label}", (x, y-15), cv2.FONT_HERSHEY_SIMPLEX, 1.6, color, 4)
+
+            # --- SONUÇLARI GÖSTER ---
+            st.subheader("📊 Analitik Raporlama")
+            col_res1, col_res2 = st.columns(2)
+            with col_res1: st.image(uploaded, caption="Giriş Verisi", use_container_width=True)
+            with col_res2: st.image(res_img, caption="Analiz Sonucu", use_container_width=True)
+            
+            st.divider()
+            
+            # Nesne Kartları (2 elma için ideal görünüm)
+            if detaylar:
+                card_cols = st.columns(len(detaylar))
+                for i, d in enumerate(detaylar):
+                    with card_cols[i]:
+                        st.markdown(f"""
+                            <div style="background-color:{d['Renk']}; padding:25px; border-radius:15px; border:3px solid {d['Border']}; text-align:center;">
+                                <h2 style="color:{d['Border']}; margin:0;">{d['Nesne']}</h2>
+                                <p style="font-size:24px; font-weight:bold; color:{d['Border']}">{d['Durum']}</p>
+                                <p style="margin:5px 0; color:#333;">🎯 Güven Skoru: <b>{d['Güven']}</b></p>
+                                <p style="margin:0; color:#555; font-size:14px;">Mikroskobik Doku Pürüzlülüğü: {d['Doku']}</p>
+                            </div>
+                        """, unsafe_allow_html=True)
+
+            # Kayıt işlemi
+            p_say = sum(1 for d in detaylar if d["Durum"] == "PESTISITLI")
+            s_say = len(detaylar) - p_say
+            clean_name = "".join(x for x in user_name if x.isalnum())
+            save_path = f"{SAVE_DIR}/{int(time.time())}_{clean_name}_{p_say}_{s_say}.png"
+            Image.fromarray(res_img).save(save_path)
+
+    # --- YÖNETİCİ ARŞİVİ ---
+    if st.session_state.logged_in:
+        st.divider()
+        st.header("📂 Laboratuvar Arşiv Havuzu")
+        
+        files = sorted(glob.glob(f"{SAVE_DIR}/*.png"), key=os.path.getmtime, reverse=True)
+        
+        if files:
+            # Toplu ZIP İndirme
+            zip_buf = BytesIO()
+            with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED, False) as zip_f:
+                for f in files: zip_f.write(f, os.path.basename(f))
+            st.download_button("📦 Tüm Arşivi ZIP Olarak İndir", data=zip_buf.getvalue(), file_name="analiz_arsivi.zip", mime="application/zip")
+            
+            # Tablo Görünümü
+            data = []
             for f in files:
-                col1, col2 = st.columns([4, 1])
-                col1.write(f"📁 {f}")
-                with col2:
-                    with open(os.path.join(SAVE_DIR, f), "rb") as file:
-                        st.download_button("💾", file, file_name=f, key=f)
-        else: st.info("Arşiv boş.")
+                p = os.path.basename(f).replace(".png", "").split("_")
+                if len(p) >= 4:
+                    data.append({"Zaman": time.ctime(int(p[0])), "Sorumlu": p[1], "Pestisitli": p[2], "Temiz": p[3]})
+            st.table(pd.DataFrame(data))
+
+            # Detaylı Görsel İnceleme
+            for f in files:
+                fname = os.path.basename(f)
+                with st.expander(f"İncele: {fname}"):
+                    st.image(f, use_container_width=True)
+                    with open(f, "rb") as fb:
+                        st.download_button("💾 Görseli İndir", data=fb, file_name=fname, mime="image/png", key=f"btn_{fname}")
+        else:
+            st.info("Arşiv henüz boş.")
