@@ -1,11 +1,10 @@
 streamlit
-numpy==1.26.4
+numpy
 opencv-python-headless
-pillow
+Pillow
 rembg
-onnxruntime
 scikit-image
 scipy
-scikit-learn==1.5.2
-plotly
-streamlit-autorefresh
+pandas
+qrcode
+scikit-learn==1.2.2
