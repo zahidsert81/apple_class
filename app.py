@@ -80,7 +80,7 @@ else:
         st.divider()
         st.subheader("📲 Mobil Hızlı Erişim")
         # Uygulamanın çalıştığı URL'yi otomatik al veya manuel gir
-        app_url = "https://pestisit-analiz.streamlit.app" # Buraya gerçek URL'nizi yazın
+        app_url = "https://pestisit-kontrol.streamlit.app/" # Buraya gerçek URL'nizi yazın
         qr = qrcode.make(app_url)
         buf = BytesIO()
         qr.save(buf, format="PNG")
