@@ -98,7 +98,7 @@ else:
 
     if uploaded and user_name:
         pil_img = Image.open(uploaded).convert("RGB")
-        with st.spinner("Yapay Zeka Mikroskobik Verileri İnceliyor..."):
+        with st.spinner("Yapay Zeka analiz yapıyor..."):
             # Arka plan temizleme ve ön işleme
             nobg = remove(pil_img).convert("RGB")
             gray = cv2.cvtColor(np.array(nobg), cv2.COLOR_RGB2GRAY)
@@ -120,7 +120,7 @@ else:
                 pred = model.predict(f_scaled)[0]
                 prob = model.predict_proba(f_scaled)[0] # Güven oranı
                 
-                label = "PESTISITLI" if pred == 1 else "TEMIZ"
+                label = "PESTISITLI" if pred == 1 else "PESTISITSIZ"
                 color = (255, 0, 0) if pred == 1 else (0, 255, 0)
                 
                 detaylar.append({
