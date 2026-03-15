@@ -9,3 +9,4 @@ pandas
 qrcode
 scikit-learn
 qrcode
+streamlit-js-eval
