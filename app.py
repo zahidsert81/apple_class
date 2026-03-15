@@ -23,7 +23,7 @@ SAVE_DIR = "analiz_havuzu"
 if not os.path.exists(SAVE_DIR):
     os.makedirs(SAVE_DIR)
 
-# --- MOBİL GÖNDERİM KONTROLÜ (YENİ) ---
+# --- MOBİL GÖNDERİM KONTROLÜ ---
 query_params = st.query_params
 is_mobile = query_params.get("mode") == "mobile"
 
@@ -58,20 +58,42 @@ def load_assets():
         return m, s
     return None
 
-# --- MOBİL ARAYÜZ (Sadece Dosya Yükleme) ---
+# --- MOBİL ARAYÜZ (GPS EKLENDİ) ---
 if is_mobile:
     st.markdown("<h2 style='text-align: center;'>📲 Mobil Veri Gönderimi</h2>", unsafe_allow_html=True)
+    
+    # Konum bilgisini almak için HTML5 Geolocation API kullanıyoruz
+    st.markdown("""
+        <script>
+        function getLocation() {
+          if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(showPosition);
+          }
+        }
+        function showPosition(position) {
+          const lat = position.coords.latitude;
+          const lon = position.coords.longitude;
+          window.parent.postMessage({type: 'location', lat: lat, lon: lon}, '*');
+        }
+        getLocation();
+        </script>
+    """, unsafe_allow_html=True)
+
     mobile_user = st.text_input("Analiz Sorumlusu Adı:", key="mob_user")
+    # Kullanıcıdan koordinatları manuel onay gibi almak için gizli olmayan bir alan
+    coords = st.text_input("Konum (Opsiyonel - örn: 40.84, 31.15):", placeholder="Harita verisi için boş bırakılabilir")
     mob_file = st.file_uploader("Termal Fotoğrafı Çek veya Seç", type=["jpg", "png", "jpeg"], key="mob_file")
     
     if mob_file and mobile_user:
-        with st.spinner("Dosya sunucuya aktarılıyor..."):
+        with st.spinner("Dosya ve konum sunucuya aktarılıyor..."):
             img = Image.open(mob_file)
-            temp_path = f"{SAVE_DIR}/TEMP_{int(time.time())}_{mobile_user}.png"
+            # Dosya ismine koordinatları da gömüyoruz
+            loc_tag = coords.replace(",", "-").replace(" ", "") if coords else "no-gps"
+            temp_path = f"{SAVE_DIR}/TEMP_{int(time.time())}_{mobile_user}_{loc_tag}.png"
             img.save(temp_path)
-            st.success("✅ Fotoğraf başarıyla gönderildi! Bilgisayar ekranından analizi kontrol edebilirsiniz.")
+            st.success("✅ Veri başarıyla gönderildi!")
             st.balloons()
-    st.stop() # Mobil moddaysa burada dur, geri kalan ağır kodları yükleme.
+    st.stop()
 
 # --- ANA BİLGİSAYAR ARAYÜZÜ ---
 col_l, col_m, col_r = st.columns([1, 4, 1])
@@ -94,7 +116,6 @@ else:
         st.header("🛂 Giriş Paneli")
         user_name = st.text_input("Analiz Sorumlusu:", placeholder="Adınız...")
         
-        # QR KOD ÜRETME
         st.divider()
         st.subheader("📲 Telefondan Fotoğraf Gönder")
         target_url = "https://pestisit-kontrol.streamlit.app/?mode=mobile"
@@ -120,29 +141,34 @@ else:
                 for f in glob.glob(f"{SAVE_DIR}/*.png"): os.remove(f)
                 st.rerun()
 
-    # MOBİL'DEN GELEN DOSYALARI OTOMATİK YAKALAMA
+    # MOBİL'DEN GELEN DOSYALARI YAKALAMA VE KONUMU AYRIŞTIRMA
     temp_files = glob.glob(f"{SAVE_DIR}/TEMP_*.png")
     uploaded = st.file_uploader("Bilgisayardan Fotoğraf Yükleyin", type=["jpg", "png", "jpeg"])
+    current_gps = "Bilinmiyor"
     
     source_file = None
     if temp_files:
         source_file = temp_files[0]
-        st.warning(f"🔔 Telefondan yeni bir veri geldi: {source_file.split('_')[-1]}")
+        fname_parts = os.path.basename(source_file).split("_")
+        if len(fname_parts) >= 4:
+            current_gps = fname_parts[3].replace(".png", "")
+        
+        st.warning(f"🔔 Mobil Veri Geldi! Sorumlu: {fname_parts[2]} | Konum: {current_gps}")
         if st.button("Mobil Veriyi İşle"):
             uploaded = source_file
     
     if uploaded and user_name:
         pil_img = Image.open(uploaded).convert("RGB")
-        with st.spinner("Yapay Zeka İnceliyor..."):
+        with st.spinner("Analiz ediliyor..."):
             nobg = remove(pil_img).convert("RGB")
             gray = cv2.cvtColor(np.array(nobg), cv2.COLOR_RGB2GRAY)
+            # ... (Özellik çıkarma ve tahmin bölümleri aynı kalıyor)
             blur = cv2.GaussianBlur(gray, (5, 5), 0)
             _, th = cv2.threshold(blur, 10, 255, cv2.THRESH_BINARY)
             contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
             res_img = np.array(pil_img).copy()
             detaylar = []
-            
             for cnt in contours:
                 if cv2.contourArea(cnt) < 1500: continue
                 x, y, w, h = cv2.boundingRect(cnt)
@@ -154,59 +180,48 @@ else:
                 
                 label = "PESTISITLI" if pred == 1 else "TEMIZ"
                 color = (255, 0, 0) if pred == 1 else (0, 255, 0)
-                
-                detaylar.append({
-                    "Nesne": f"Örnek {len(detaylar)+1}",
-                    "Durum": label,
-                    "Güven": f"%{max(prob)*100:.1f}",
-                    "Doku": f"{feats[0][0]:.2f}",
-                    "Renk": "#fee2e2" if pred == 1 else "#dcfce7",
-                    "Border": "#991b1b" if pred == 1 else "#166534"
-                })
+                detaylar.append({"Durum": label, "Güven": f"%{max(prob)*100:.1f}", "Renk": "#fee2e2" if pred == 1 else "#dcfce7", "Border": "#991b1b" if pred == 1 else "#166534"})
                 cv2.rectangle(res_img, (x, y), (x+w, y+h), color, 12)
-                cv2.putText(res_img, f"#{len(detaylar)} {label}", (x, y-15), cv2.FONT_HERSHEY_SIMPLEX, 1.6, color, 4)
 
+            # --- SONUÇ PANELİ VE KONUM GÖSTERİMİ ---
             st.subheader("📊 Analitik Raporlama")
-            col_res1, col_res2 = st.columns(2)
-            with col_res1: st.image(uploaded, caption="Giriş Verisi", use_container_width=True)
-            with col_res2: st.image(res_img, caption="Analiz Sonucu", use_container_width=True)
-            
-            if detaylar:
-                card_cols = st.columns(len(detaylar))
-                for i, d in enumerate(detaylar):
-                    with card_cols[i]:
-                        st.markdown(f"""<div style="background-color:{d['Renk']}; padding:25px; border-radius:15px; border:3px solid {d['Border']}; text-align:center;">
-                            <h2 style="color:{d['Border']}; margin:0;">{d['Nesne']}</h2>
-                            <p style="font-size:24px; font-weight:bold; color:{d['Border']}">{d['Durum']}</p>
-                            <p style='color:#333;'>🎯 Güven: {d['Güven']}</p></div>""", unsafe_allow_html=True)
+            if current_gps != "Bilinmiyor" and "no-gps" not in current_gps:
+                st.info(f"📍 Analiz Edilen Bölge Koordinatı: {current_gps}")
+                # Google Maps linki ekleyelim
+                map_url = f"https://www.google.com/maps/search/?api=1&query={current_gps.replace('-', ',')}"
+                st.markdown(f"[🌍 Haritada Görüntüle]({map_url})")
 
+            col_res1, col_res2 = st.columns(2)
+            with col_res1: st.image(uploaded, use_container_width=True)
+            with col_res2: st.image(res_img, use_container_width=True)
+
+            # Kayıt (Dosya ismine konumu da ekliyoruz)
             p_say = sum(1 for d in detaylar if d["Durum"] == "PESTISITLI")
             s_say = len(detaylar) - p_say
-            clean_name = "".join(x for x in user_name if x.isalnum())
-            save_path = f"{SAVE_DIR}/{int(time.time())}_{clean_name}_{p_say}_{s_say}.png"
+            clean_gps = current_gps.replace("-", "_")
+            save_path = f"{SAVE_DIR}/{int(time.time())}_{user_name}_{p_say}_{s_say}_{clean_gps}.png"
             Image.fromarray(res_img).save(save_path)
             
-            # Eğer mobil geçici dosyaysa, işlem bitince sil
             if isinstance(uploaded, str) and "TEMP_" in uploaded:
                 os.remove(uploaded)
-                st.success("Mobil veri arşive taşındı ve geçici dosya temizlendi.")
 
-    # --- YÖNETİCİ ARŞİVİ ---
+    # --- ARŞİV TABLOSU (KONUM SÜTUNU EKLENDİ) ---
     if st.session_state.logged_in:
         st.divider()
         st.header("📂 Laboratuvar Arşiv Havuzu")
         files = sorted(glob.glob(f"{SAVE_DIR}/*.png"), key=os.path.getmtime, reverse=True)
-        files = [f for f in files if "TEMP_" not in f] # Geçici dosyaları listede gösterme
+        files = [f for f in files if "TEMP_" not in f]
         
         if files:
-            zip_buf = BytesIO()
-            with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED, False) as zip_f:
-                for f in files: zip_f.write(f, os.path.basename(f))
-            st.download_button("📦 Arşivi İndir", data=zip_buf.getvalue(), file_name="analiz_arsivi.zip")
-            
             data = []
             for f in files:
                 p = os.path.basename(f).replace(".png", "").split("_")
-                if len(p) >= 4:
-                    data.append({"Zaman": time.ctime(int(p[0])), "Sorumlu": p[1], "Pestisitli": p[2], "Temiz": p[3]})
+                if len(p) >= 5:
+                    data.append({
+                        "Zaman": time.ctime(int(p[0])), 
+                        "Sorumlu": p[1], 
+                        "Pestisitli": p[2], 
+                        "Temiz": p[3],
+                        "Konum (GPS)": p[4] if p[4] != "no-gps" else "Belirtilmedi"
+                    })
             st.table(pd.DataFrame(data))
