@@ -153,7 +153,7 @@ else:
                                 <h2 style="color:{d['Border']}; margin:0;">{d['Nesne']}</h2>
                                 <p style="font-size:24px; font-weight:bold; color:{d['Border']}">{d['Durum']}</p>
                                 <p style="margin:5px 0; color:#333;">🎯 Güven Skoru: <b>{d['Güven']}</b></p>
-                                <p style="margin:0; color:#555; font-size:14px;">Mikroskobik Doku Pürüzlülüğü: {d['Doku']}</p>
+                                <p style="margin:0; color:#555; font-size:14px;"> Doku Pürüzlülüğü: {d['Doku']}</p>
                             </div>
                         """, unsafe_allow_html=True)
 
