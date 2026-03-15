@@ -12,6 +12,7 @@ from PIL import Image
 from rembg import remove
 from skimage.feature import graycomatrix, graycoprops
 from scipy.stats import skew, kurtosis
+import qrcode # Kütüphane eklendi
 
 # 1. SAYFA AYARLARI
 st.set_page_config(page_title="Pestisit Analiz Lab", page_icon="🧪", layout="wide")
@@ -74,6 +75,18 @@ else:
     with st.sidebar:
         st.header("🛂 Giriş Paneli")
         user_name = st.text_input("Analiz Sorumlusu:", placeholder="Adınız...")
+        
+        # --- QR KOD BÖLÜMÜ (YENİ) ---
+        st.divider()
+        st.subheader("📲 Mobil Hızlı Erişim")
+        # Uygulamanın çalıştığı URL'yi otomatik al veya manuel gir
+        app_url = "https://pestisit-analiz.streamlit.app" # Buraya gerçek URL'nizi yazın
+        qr = qrcode.make(app_url)
+        buf = BytesIO()
+        qr.save(buf, format="PNG")
+        st.image(buf, caption="Veri Göndermek İçin Taratın", width=150)
+        # --------------------------
+        
         st.divider()
         
         if 'logged_in' not in st.session_state: st.session_state.logged_in = False
